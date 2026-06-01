@@ -61,7 +61,8 @@ class PowerGrid():
             raise ValueError(
                 "Invalid algorithm choice. Please choose 'Laurent' or 'PandaPower'.")
 
-        assert self.config['timescale'] == 15, "Only 15 minutes timescale is supported with the simulate_grid=True !!!"
+        # assert self.config['timescale'] == 15, "Only 15 minutes timescale is supported with the simulate_grid=True !!!"
+        assert self.config['timescale'] in [5, 15], "Only 5 or 15 minutes timescale is supported with simulate_grid=True"
 
         data_generator = pkg_resources.resource_filename(
             'ev2gym', 'data/augmentor.pkl')
@@ -83,7 +84,8 @@ class PowerGrid():
 
         hour = date.hour
         minute = date.minute
-        time_slot = hour * 4 + minute // 15
+        # time_slot = hour * 4 + minute // 15
+        time_slot = hour * (60 // self.config['timescale']) + minute // self.config['timescale']
         self.current_step = 0
 
         if load_data is not None:

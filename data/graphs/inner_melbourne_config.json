@@ -1,0 +1,238 @@
+{
+  "zone": "inner_melbourne",
+  "n_hubs": 21,
+  "n_directed_edges": 140,
+  "hub_configs": [
+    {
+      "hub_id": 0,
+      "distance_km": 0.82,
+      "loc_x": 0.0101,
+      "loc_y": 0.1023,
+      "n_chargers": 2,
+      "charger_max_kw": 50.0,
+      "p_max_kw": 100.0,
+      "lat": -37.806248,
+      "lon": 144.964016
+    },
+    {
+      "hub_id": 1,
+      "distance_km": 2.09,
+      "loc_x": -0.0235,
+      "loc_y": -0.2598,
+      "n_chargers": 1,
+      "charger_max_kw": 50.0,
+      "p_max_kw": 50.0,
+      "lat": -37.83227,
+      "lon": 144.960963
+    },
+    {
+      "hub_id": 2,
+      "distance_km": 2.84,
+      "loc_x": 0.3314,
+      "loc_y": 0.1271,
+      "n_chargers": 4,
+      "charger_max_kw": 50.0,
+      "p_max_kw": 200.0,
+      "lat": -37.804466,
+      "lon": 144.993244
+    },
+    {
+      "hub_id": 3,
+      "distance_km": 2.93,
+      "loc_x": 0.3604,
+      "loc_y": 0.0628,
+      "n_chargers": 1,
+      "charger_max_kw": 50.0,
+      "p_max_kw": 50.0,
+      "lat": -37.809085,
+      "lon": 144.995885
+    },
+    {
+      "hub_id": 4,
+      "distance_km": 3.02,
+      "loc_x": -0.3151,
+      "loc_y": -0.2085,
+      "n_chargers": 3,
+      "charger_max_kw": 50.0,
+      "p_max_kw": 150.0,
+      "lat": -37.828584,
+      "lon": 144.934439
+    },
+    {
+      "hub_id": 5,
+      "distance_km": 3.4,
+      "loc_x": 0.3918,
+      "loc_y": -0.166,
+      "n_chargers": 1,
+      "charger_max_kw": 50.0,
+      "p_max_kw": 50.0,
+      "lat": -37.825531,
+      "lon": 144.998745
+    },
+    {
+      "hub_id": 6,
+      "distance_km": 3.53,
+      "loc_x": 0.3602,
+      "loc_y": -0.2545,
+      "n_chargers": 1,
+      "charger_max_kw": 50.0,
+      "p_max_kw": 50.0,
+      "lat": -37.831886,
+      "lon": 144.995867
+    },
+    {
+      "hub_id": 7,
+      "distance_km": 3.53,
+      "loc_x": -0.3658,
+      "loc_y": -0.247,
+      "n_chargers": 1,
+      "charger_max_kw": 50.0,
+      "p_max_kw": 50.0,
+      "lat": -37.831348,
+      "lon": 144.929827
+    },
+    {
+      "hub_id": 8,
+      "distance_km": 3.67,
+      "loc_x": -0.4116,
+      "loc_y": -0.203,
+      "n_chargers": 2,
+      "charger_max_kw": 25.0,
+      "p_max_kw": 50.0,
+      "lat": -37.82819,
+      "lon": 144.925654
+    },
+    {
+      "hub_id": 9,
+      "distance_km": 4.12,
+      "loc_x": 0.0091,
+      "loc_y": 0.5151,
+      "n_chargers": 1,
+      "charger_max_kw": 50.0,
+      "p_max_kw": 50.0,
+      "lat": -37.776585,
+      "lon": 144.963927
+    },
+    {
+      "hub_id": 10,
+      "distance_km": 4.22,
+      "loc_x": 0.5271,
+      "loc_y": 0.0181,
+      "n_chargers": 2,
+      "charger_max_kw": 50.0,
+      "p_max_kw": 100.0,
+      "lat": -37.8123,
+      "lon": 145.011044
+    },
+    {
+      "hub_id": 11,
+      "distance_km": 4.38,
+      "loc_x": -0.4733,
+      "loc_y": -0.2748,
+      "n_chargers": 1,
+      "charger_max_kw": 11.0,
+      "p_max_kw": 11.0,
+      "lat": -37.833348,
+      "lon": 144.92005
+    },
+    {
+      "hub_id": 12,
+      "distance_km": 4.42,
+      "loc_x": -0.0143,
+      "loc_y": 0.5527,
+      "n_chargers": 2,
+      "charger_max_kw": 50.0,
+      "p_max_kw": 100.0,
+      "lat": -37.77388,
+      "lon": 144.961801
+    },
+    {
+      "hub_id": 13,
+      "distance_km": 4.67,
+      "loc_x": -0.0151,
+      "loc_y": 0.5838,
+      "n_chargers": 1,
+      "charger_max_kw": 22.0,
+      "p_max_kw": 22.0,
+      "lat": -37.771645,
+      "lon": 144.961731
+    },
+    {
+      "hub_id": 14,
+      "distance_km": 4.69,
+      "loc_x": -0.054,
+      "loc_y": 0.5833,
+      "n_chargers": 1,
+      "charger_max_kw": 22.0,
+      "p_max_kw": 22.0,
+      "lat": -37.77168,
+      "lon": 144.958185
+    },
+    {
+      "hub_id": 15,
+      "distance_km": 5.06,
+      "loc_x": 0.1285,
+      "loc_y": 0.6188,
+      "n_chargers": 2,
+      "charger_max_kw": 7.0,
+      "p_max_kw": 14.0,
+      "lat": -37.769132,
+      "lon": 144.974786
+    },
+    {
+      "hub_id": 16,
+      "distance_km": 6.22,
+      "loc_x": -0.5273,
+      "loc_y": 0.5713,
+      "n_chargers": 4,
+      "charger_max_kw": 50.0,
+      "p_max_kw": 200.0,
+      "lat": -37.772547,
+      "lon": 144.915133
+    },
+    {
+      "hub_id": 17,
+      "distance_km": 6.35,
+      "loc_x": -0.4344,
+      "loc_y": 0.6647,
+      "n_chargers": 1,
+      "charger_max_kw": 50.0,
+      "p_max_kw": 50.0,
+      "lat": -37.765834,
+      "lon": 144.923586
+    },
+    {
+      "hub_id": 18,
+      "distance_km": 6.36,
+      "loc_x": -0.435,
+      "loc_y": 0.6647,
+      "n_chargers": 2,
+      "charger_max_kw": 22.0,
+      "p_max_kw": 44.0,
+      "lat": -37.765831,
+      "lon": 144.923526
+    },
+    {
+      "hub_id": 19,
+      "distance_km": 7.5,
+      "loc_x": 0.7306,
+      "loc_y": -0.5877,
+      "n_chargers": 2,
+      "charger_max_kw": 50.0,
+      "p_max_kw": 100.0,
+      "lat": -37.855838,
+      "lon": 145.029564
+    },
+    {
+      "hub_id": 20,
+      "distance_km": 7.85,
+      "loc_x": 0.7074,
+      "loc_y": -0.6795,
+      "n_chargers": 4,
+      "charger_max_kw": 50.0,
+      "p_max_kw": 200.0,
+      "lat": -37.862429,
+      "lon": 145.027453
+    }
+  ]
+}
