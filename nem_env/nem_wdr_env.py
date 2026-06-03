@@ -101,7 +101,7 @@ class EnvConfig:
     mean_soc_std: float = 0.15
 
     # Reward weights (tune these during training; candidates for sweep)
-    lambda_conformance: float = 50.0   # penalty per kWh deviation from target
+    lambda_conformance: float = 200.0   # penalty per kWh deviation from target
     lambda_degradation: float = 0.02   # cost per kWh discharged
     conformance_tolerance: float = 0.10  # fraction of target within which no penalty
 
