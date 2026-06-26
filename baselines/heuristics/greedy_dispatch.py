@@ -3,20 +3,17 @@ baselines/heuristics/greedy_dispatch.py
 ========================================
 Greedy dispatch baseline (Table 3, Baseline 1).
 
-Policy: At each step, allocate full dispatch (δ=1.0) to hubs ranked by
-descending mean SoC, and offer a fixed incentive price equal to the
-mean spot price observed so far in the episode.
+Policy: discharge at full equipment cap when RRP > threshold, charge at
+full cap when RRP <= threshold. Offers a fixed incentive price each step.
 
-Addresses RQ1 and RQ2: evaluates the value of learned dispatch
-allocation and pricing over a simple heuristic that requires no
-training.
-
-This is intentionally simple — it represents what a naive VSRP operator
-might do without any machine learning.
+This is a price-taker heuristic requiring no training — it represents
+what a naive operator might do using only the current spot price signal.
+Addresses RQ1 and RQ2: establishes the value of learned SAC-GNN policy
+over a simple rule-based alternative.
 """
 
 import numpy as np
-from nem_env.nem_wdr_env import NEMWDREnv
+from nem_env.nem_doe_env import NEMDOEEnv
 
 
 class GreedyDispatchBaseline:
@@ -27,34 +24,46 @@ class GreedyDispatchBaseline:
     ----------
     n_hubs : int
         Number of hubs.
+    discharge_threshold : float
+        RRP threshold ($/MWh) above which the agent discharges.
+        Below this, agent charges. Default 100.0.
     fixed_price : float
-        Fixed incentive price offered every step ($/MWh).
-        Default 80.0 — approximate historical NEM mean price.
+        Fixed incentive price offered every step ($/kWh).
+        Default 0.10 — approximate mid-range incentive.
     """
 
-    def __init__(self, n_hubs: int, fixed_price: float = 80.0):
+    def __init__(self, n_hubs: int, discharge_threshold: float = 100.0,
+                 fixed_price: float = 0.10):
         self.n_hubs = n_hubs
+        self.discharge_threshold = discharge_threshold
         self.fixed_price = fixed_price
         self.name = "GreedyDispatch"
 
-    def select_action(self, obs: np.ndarray, env: NEMWDREnv) -> np.ndarray:
+    def select_action(self, obs: np.ndarray, env: NEMDOEEnv) -> np.ndarray:
         """
         Select action from observation.
 
-        Dispatch fractions: rank hubs by mean_soc (node feature index 1),
-        assign δ=1.0 to top half, δ=0.0 to bottom half.
-        Price: fixed at self.fixed_price.
+        Dispatch: if RRP > discharge_threshold → discharge all hubs at
+        equipment cap (positive kW); else charge all hubs at full cap
+        (negative kW). Equipment cap is node feature [5].
+        Price: fixed at self.fixed_price ($/kWh).
         """
-        # Extract per-hub node features from flat obs
-        node_feats, _ = env.obs_to_node_and_zone(obs)
-        mean_socs = node_feats[:, 1]  # column 1 = mean_soc
+        # Reshape flat obs to (H, 9) node features — no zone block
+        node_feats = env.obs_to_node_features(obs)  # (H, 9)
 
-        # Rank hubs by SoC descending
-        ranked = np.argsort(-mean_socs)
-        dispatch = np.zeros(self.n_hubs, dtype=np.float32)
-        # Dispatch top half fully
-        top_k = max(1, self.n_hubs // 2)
-        dispatch[ranked[:top_k]] = 1.0
+        # RRP is broadcast to all nodes as feature [6]; read from hub 0
+        rrp_norm = float(node_feats[0, 6])  # normalised
+        rrp = rrp_norm * env.cfg.rrp_clip_high   # denormalise to $/MWh
+
+        # Equipment cap per hub: node feature [5] in kW
+        equipment_caps = node_feats[:, 5]  # (H,)
+
+        if rrp > self.discharge_threshold:
+            # High price: discharge (positive kW)
+            dispatch = equipment_caps.copy()
+        else:
+            # Low/negative price: charge (negative kW)
+            dispatch = -equipment_caps.copy()
 
         action = np.append(dispatch, self.fixed_price).astype(np.float32)
         return action

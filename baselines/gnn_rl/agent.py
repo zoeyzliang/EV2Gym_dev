@@ -37,8 +37,11 @@ Temperature loss (auto-tune α to target entropy):
 
 Observation handling
 --------------------
-The flat observation vector from NEMWDREnv is split into node features
-and zone features inside each forward pass using obs_to_node_and_zone().
+The flat observation vector from NEMDOEEnv is (H × 9,) — no separate
+zone feature block. It is reshaped to (H, 9) node features inside each
+forward pass using obs_to_node_features(). RRP is already broadcast
+into node feature [6] of every hub node, so the GAT encoder has full
+price information without a separate zone vector.
 The static graph (edge_index, edge_attr) is stored in the agent and
 attached to every forward pass — it doesn't change during training.
 
@@ -79,7 +82,8 @@ class SACGNNAgent:
         Static hub graph from spatial_graph.HubGraphBuilder.
         Contains edge_index and edge_attr used in every forward pass.
     obs_dim : int
-        Flat observation dimension from NEMWDREnv.observation_space.shape[0].
+        Flat observation dimension from NEMDOEEnv.observation_space.shape[0].
+        = H × NEMDOEEnv.NODE_FEATURE_DIM = H × 9.
     net_cfg : NetworkConfig, optional
         Neural network hyperparameters.
     gamma : float
@@ -130,7 +134,7 @@ class SACGNNAgent:
         self.n_hubs = n_hubs
         self.graph_data = graph_data
         self.obs_dim = obs_dim
-        self.action_dim = n_hubs + 1    # H dispatch fractions + 1 price
+        self.action_dim = n_hubs + 1    # H signed dispatch targets (kW) + 1 price ($/kWh)
         self.gamma = gamma
         self.tau = tau
         self.batch_size = batch_size
@@ -267,22 +271,21 @@ class SACGNNAgent:
         action : np.ndarray, shape (action_dim,)
             [δ_0, ..., δ_{H-1}, c_t] clipped to valid bounds.
         """
-        # Split observation into node features and zone features
-        node_feats, zone_feats = self._split_obs(obs)
+        # Reshape flat obs to node feature matrix (H, 9)
+        node_feats = self._split_obs(obs)
 
         if self._use_torch:
             import torch
             with torch.no_grad():
                 node_t = torch.tensor(node_feats, dtype=torch.float32)
-                zone_t = torch.tensor(zone_feats, dtype=torch.float32)
                 action, _ = self.actor(
-                    node_t, self._edge_index_t, zone_t,
+                    node_t, self._edge_index_t,
                     deterministic=deterministic,
                 )
             action = action.numpy()
         else:
             # Numpy fallback: always deterministic (no reparameterisation)
-            action = self.actor.forward(node_feats, self._edge_index_t, zone_feats)
+            action = self.actor.forward(node_feats, self._edge_index_t)
 
         return np.clip(action, self._action_low(), self._action_high())
 
@@ -293,10 +296,9 @@ class SACGNNAgent:
         reward: float,
         next_obs: np.ndarray,
         done: bool,
-        wdr_active: bool = False,
     ) -> None:
         """Add one environment transition to the replay buffer."""
-        self.buffer.add(obs, action, reward, next_obs, done, wdr_active)
+        self.buffer.add(obs, action, reward, next_obs, done)
         self._total_steps += 1
 
     def update(self) -> Optional[dict]:
@@ -362,12 +364,12 @@ class SACGNNAgent:
             next_actions, next_log_probs = self._batch_actor_forward(next_obs_t)
 
             # Clipped double-Q target (takes min of two critics)
-            next_node, next_zone = self._batch_split_obs(next_obs_t)
+            next_node = self._batch_split_obs(next_obs_t)
             q1_next = self._batch_critic_forward(
-                self.target_critic1, next_node, next_zone, next_actions
+                self.target_critic1, next_node, next_actions
             )
             q2_next = self._batch_critic_forward(
-                self.target_critic2, next_node, next_zone, next_actions
+                self.target_critic2, next_node, next_actions
             )
             q_next = torch.min(q1_next, q2_next)
 
@@ -376,11 +378,11 @@ class SACGNNAgent:
                 q_next - alpha * next_log_probs.unsqueeze(1)
             )
 
-        # Current node/zone features
-        curr_node, curr_zone = self._batch_split_obs(obs_t)
+        # Current node features
+        curr_node = self._batch_split_obs(obs_t)
 
         # Critic 1 loss
-        q1 = self._batch_critic_forward(self.critic1, curr_node, curr_zone, act_t)
+        q1 = self._batch_critic_forward(self.critic1, curr_node, act_t)
         critic1_loss = F.mse_loss(q1, y)
         self.critic1_opt.zero_grad()
         critic1_loss.backward()
@@ -388,7 +390,7 @@ class SACGNNAgent:
         self.critic1_opt.step()
 
         # Critic 2 loss
-        q2 = self._batch_critic_forward(self.critic2, curr_node, curr_zone, act_t)
+        q2 = self._batch_critic_forward(self.critic2, curr_node, act_t)
         critic2_loss = F.mse_loss(q2, y)
         self.critic2_opt.zero_grad()
         critic2_loss.backward()
@@ -398,10 +400,10 @@ class SACGNNAgent:
         # --- Step 2: Actor update ---
         new_actions, log_probs = self._batch_actor_forward(obs_t)
         q1_pi = self._batch_critic_forward(
-            self.critic1, curr_node, curr_zone, new_actions
+            self.critic1, curr_node, new_actions
         )
         q2_pi = self._batch_critic_forward(
-            self.critic2, curr_node, curr_zone, new_actions
+            self.critic2, curr_node, new_actions
         )
         q_pi = torch.min(q1_pi, q2_pi)
 
@@ -455,16 +457,16 @@ class SACGNNAgent:
         log_probs_list = []
 
         for i in range(B):
-            node_t, zone_t = self._batch_split_obs_single(obs_batch[i])
+            node_t = self._batch_split_obs_single(obs_batch[i])
             action, log_prob = self.actor(
-                node_t, self._edge_index_t, zone_t, deterministic=False
+                node_t, self._edge_index_t, deterministic=False
             )
             actions_list.append(action)
             log_probs_list.append(log_prob)
 
         return torch.stack(actions_list), torch.stack(log_probs_list)
 
-    def _batch_critic_forward(self, critic, node_batch, zone_batch, action_batch):
+    def _batch_critic_forward(self, critic, node_batch, action_batch):
         """Run critic on a batch, return (B, 1) Q-values."""
         import torch
         B = node_batch.shape[0]
@@ -473,55 +475,46 @@ class SACGNNAgent:
             q = critic(
                 node_batch[i],
                 self._edge_index_t,
-                zone_batch[i],
                 action_batch[i],
             )
             q_list.append(q)
         return torch.stack(q_list)
 
     def _batch_split_obs(self, obs_batch):
-        """Split (B, obs_dim) into (B, H, node_dim) and (B, zone_dim)."""
-        import torch
+        """Reshape (B, obs_dim) into (B, H, node_feature_dim=9).
+        No zone feature block — RRP is in node feature [6]."""
         B = obs_batch.shape[0]
-        n_hub_feats = self.n_hubs * self.net_cfg.node_feature_dim
-        node = obs_batch[:, :n_hub_feats].reshape(
-            B, self.n_hubs, self.net_cfg.node_feature_dim
-        )
-        zone = obs_batch[:, n_hub_feats:]
-        return node, zone
+        return obs_batch.reshape(B, self.n_hubs, self.net_cfg.node_feature_dim)
 
     def _batch_split_obs_single(self, obs):
-        """Split single (obs_dim,) obs into node tensor (H, node_dim) and zone tensor."""
-        import torch
-        n_hub_feats = self.n_hubs * self.net_cfg.node_feature_dim
-        node = obs[:n_hub_feats].reshape(self.n_hubs, self.net_cfg.node_feature_dim)
-        zone = obs[n_hub_feats:]
-        return node, zone
+        """Reshape single (obs_dim,) obs to node tensor (H, node_feature_dim=9).
+        No zone feature block — RRP is in node feature [6]."""
+        return obs.reshape(self.n_hubs, self.net_cfg.node_feature_dim)
 
     # ------------------------------------------------------------------
     # Observation splitting (numpy, for select_action)
     # ------------------------------------------------------------------
 
-    def _split_obs(self, obs: np.ndarray):
-        """Split flat obs into node feature matrix and zone features."""
-        n_hub_feats = self.n_hubs * self.net_cfg.node_feature_dim
-        node_feats = obs[:n_hub_feats].reshape(
-            self.n_hubs, self.net_cfg.node_feature_dim
-        )
-        zone_feats = obs[n_hub_feats:]
-        return node_feats, zone_feats
+    def _split_obs(self, obs: np.ndarray) -> np.ndarray:
+        """Reshape flat obs (H×9,) to node feature matrix (H, 9).
+        No zone feature block — RRP is broadcast into node feature [6]."""
+        return obs.reshape(self.n_hubs, self.net_cfg.node_feature_dim)
 
     # ------------------------------------------------------------------
     # Action space bounds
     # ------------------------------------------------------------------
 
     def _action_low(self) -> np.ndarray:
-        low = np.zeros(self.action_dim, dtype=np.float32)
+        # Dispatch is signed kW: [-equipment_cap, +equipment_cap]
+        # Price is $/kWh: [price_min, price_max]
+        # The env clips more tightly (DOE + equipment cap), so these are
+        # loose outer bounds for safety clipping only.
+        low = np.full(self.action_dim, -self.net_cfg.equipment_cap_kw, dtype=np.float32)
         low[-1] = self.net_cfg.price_min
         return low
 
     def _action_high(self) -> np.ndarray:
-        high = np.ones(self.action_dim, dtype=np.float32)
+        high = np.full(self.action_dim, +self.net_cfg.equipment_cap_kw, dtype=np.float32)
         high[-1] = self.net_cfg.price_max
         return high
 
@@ -598,7 +591,6 @@ class SACGNNAgent:
             "total_steps": self._total_steps,
             "total_updates": self._total_updates,
             "buffer_size": self.buffer.size,
-            "wdr_fraction_in_buffer": round(self.buffer.wdr_fraction, 4),
             "using_torch": self._use_torch,
             "alpha": float(np.exp(self.log_alpha))
             if not self._use_torch

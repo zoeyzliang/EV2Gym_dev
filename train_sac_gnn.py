@@ -61,7 +61,7 @@ os.environ.pop("FORCE_NUMPY_AGENT", None)
 from nem_env.spatial_graph import HubGraphBuilder
 from nem_env.aemo_price_loader import PriceLoader
 from nem_env.participation_model import ParticipationModel
-from nem_env.nem_wdr_env import NEMWDREnv, EnvConfig
+from nem_env.nem_doe_env import NEMDOEEnv, EnvConfig
 from baselines.gnn_rl.agent import SACGNNAgent
 from baselines.gnn_rl.networks import NetworkConfig
 
@@ -86,7 +86,6 @@ DEFAULT_CONFIG = {
     "price_end": "2023-12-31",        # training period
     "eval_price_start": "2024-01-01", # held-out evaluation period
     "eval_price_end": "2024-12-31",
-    "force_wdr": True,                # curriculum: guarantee WDR per episode
 
     # Participation model betas (§4.2.2, calibrated from Liu et al. 2025)
     "beta_0": -2.20,
@@ -153,9 +152,9 @@ def parse_args():
 # Environment factory
 # ---------------------------------------------------------------------------
 
-def make_env(cfg: dict, split: str = "train", seed: int = 42) -> NEMWDREnv:
+def make_env(cfg: dict, split: str = "train", seed: int = 42) -> NEMDOEEnv:
     """
-    Build a NEMWDREnv from config.
+    Build a NEMDOEEnv from config.
 
     Parameters
     ----------
@@ -216,12 +215,11 @@ def make_env(cfg: dict, split: str = "train", seed: int = 42) -> NEMWDREnv:
         seed=seed,
     )
 
-    env = NEMWDREnv(
+    env = NEMDOEEnv(
         hub_configs=hub_configs,
         price_loader=loader,
         participation_model=model,
         env_config=EnvConfig(),
-        force_wdr=cfg["force_wdr"],
         seed=seed,
     )
 
@@ -234,7 +232,7 @@ def make_env(cfg: dict, split: str = "train", seed: int = 42) -> NEMWDREnv:
 
 def evaluate(
     agent: SACGNNAgent,
-    eval_env: NEMWDREnv,
+    eval_env: NEMDOEEnv,
     n_episodes: int,
     episode_num: int,
 ) -> dict:
@@ -249,61 +247,41 @@ def evaluate(
 
     Returns dict of mean metrics across evaluation episodes.
     """
-    conformance_rates = []
     net_profits = []
     participation_rates = []
     episode_rewards = []
+    doe_violation_totals = []
 
     for _ in range(n_episodes):
         obs, _ = eval_env.reset()
         done = False
         ep_reward = 0.0
-        wdr_steps = 0
-        conformant_steps = 0
         total_rho_hat = 0.0
+        total_doe_violation_kw = 0.0
         rho_steps = 0
 
         while not done:
-            # Deterministic policy for evaluation
             action = agent.select_action(obs, deterministic=True)
             obs, reward, done, _, info = eval_env.step(action)
             ep_reward += reward
-
-            if info["wdr_active"]:
-                wdr_steps += 1
-                # Conformance: delivered within 10% of target
-                e_del = info["e_del_total_kwh"] / 1000  # kWh → MWh
-                target = info["dispatch_target_mw"] * (5 / 60)  # MW → MWh
-                if target > 0:
-                    deviation_frac = abs(e_del - target) / target
-                    if deviation_frac <= 0.10:
-                        conformant_steps += 1
-
             total_rho_hat += info.get("rho_hat", 0.0)
+            total_doe_violation_kw += sum(info.get("doe_violations_kw", [0.0]))
             rho_steps += 1
 
-        # Episode metrics
-        conformance_rate = (
-            conformant_steps / wdr_steps if wdr_steps > 0 else float("nan")
-        )
-        conformance_rates.append(conformance_rate)
         net_profits.append(ep_reward)
         participation_rates.append(
             total_rho_hat / rho_steps if rho_steps > 0 else 0.0
         )
         episode_rewards.append(ep_reward)
-
-    # Filter NaN conformance (episodes with no WDR)
-    valid_conformance = [x for x in conformance_rates if not np.isnan(x)]
+        doe_violation_totals.append(total_doe_violation_kw)
 
     return {
         "eval_episode": episode_num,
-        "mean_conformance_rate": np.mean(valid_conformance) if valid_conformance else 0.0,
         "mean_net_profit": np.mean(net_profits),
         "mean_participation_rate": np.mean(participation_rates),
         "mean_episode_reward": np.mean(episode_rewards),
         "std_episode_reward": np.std(episode_rewards),
-        "n_episodes_with_wdr": len(valid_conformance),
+        "mean_doe_violation_kw": np.mean(doe_violation_totals),
     }
 
 
@@ -377,7 +355,7 @@ def train(cfg: dict, resume_path: str = None, no_eval: bool = False):
     # ── Training state ────────────────────────────────────────────────
     training_log = []
     eval_log = []
-    best_conformance = 0.0
+    best_net_profit = float("-inf")
     convergence_episode = None
     reward_history = []
 
@@ -395,9 +373,8 @@ def train(cfg: dict, resume_path: str = None, no_eval: bool = False):
         done = False
         ep_reward = 0.0
         ep_steps = 0
-        wdr_steps = 0
-        conformant_steps = 0
         total_rho_hat = 0.0
+        total_doe_violation_kw = 0.0
         ep_losses = {"critic_loss": [], "actor_loss": [], "alpha": []}
 
         while not done:
@@ -410,7 +387,6 @@ def train(cfg: dict, resume_path: str = None, no_eval: bool = False):
             # Store transition
             agent.store_transition(
                 obs, action, reward, next_obs, done,
-                wdr_active=info["wdr_active"],
             )
 
             # SAC update
@@ -424,29 +400,19 @@ def train(cfg: dict, resume_path: str = None, no_eval: bool = False):
             ep_reward += reward
             ep_steps += 1
             total_rho_hat += info.get("rho_hat", 0.0)
-
-            if info["wdr_active"]:
-                wdr_steps += 1
-                e_del = info["e_del_total_kwh"] / 1000
-                target = info["dispatch_target_mw"] * (5 / 60)
-                if target > 0 and abs(e_del - target) / target <= 0.10:
-                    conformant_steps += 1
+            total_doe_violation_kw += sum(info.get("doe_violations_kw", [0.0]))
 
             obs = next_obs
 
         # ── Episode metrics ───────────────────────────────────────────
-        conformance_rate = (
-            conformant_steps / wdr_steps if wdr_steps > 0 else float("nan")
-        )
         mean_rho = total_rho_hat / ep_steps
         reward_history.append(ep_reward)
 
         log_entry = {
             "episode": episode,
             "reward": ep_reward,
-            "conformance_rate": conformance_rate,
             "mean_participation_rate": mean_rho,
-            "wdr_steps": wdr_steps,
+            "doe_violation_kw": total_doe_violation_kw,
             "buffer_size": agent.buffer.size,
             "total_steps": agent._total_steps,
             "critic_loss": np.mean(ep_losses["critic_loss"]) if ep_losses["critic_loss"] else None,
@@ -476,8 +442,8 @@ def train(cfg: dict, resume_path: str = None, no_eval: bool = False):
                 f"Ep {episode:4d}/{n_episodes} | "
                 f"reward={ep_reward:8.1f} | "
                 f"avg10={recent_reward:8.1f} | "
-                f"conf={conformance_rate:.2f} | "
                 f"ρ={mean_rho:.3f} | "
+                f"doe_viol={total_doe_violation_kw:.1f}kW | "
                 f"buf={agent.buffer.size:6d} | "
                 f"α={log_entry['alpha']:.4f}" if log_entry['alpha'] else
                 f"Ep {episode:4d}/{n_episodes} | "
@@ -494,17 +460,17 @@ def train(cfg: dict, resume_path: str = None, no_eval: bool = False):
             eval_log.append(eval_metrics)
 
             logger.info(
-                f"  → Eval: conformance={eval_metrics['mean_conformance_rate']:.3f} | "
-                f"profit={eval_metrics['mean_net_profit']:.1f} | "
-                f"participation={eval_metrics['mean_participation_rate']:.3f}"
+                f"  → Eval: profit={eval_metrics['mean_net_profit']:.1f} | "
+                f"participation={eval_metrics['mean_participation_rate']:.3f} | "
+                f"doe_viol={eval_metrics['mean_doe_violation_kw']:.1f}kW"
             )
 
             # Save best checkpoint by conformance rate
-            if eval_metrics["mean_conformance_rate"] > best_conformance:
-                best_conformance = eval_metrics["mean_conformance_rate"]
+            if eval_metrics["mean_net_profit"] > best_net_profit:
+                best_net_profit = eval_metrics["mean_net_profit"]
                 agent.save(str(ckpt_dir / "best.pt"))
                 logger.info(
-                    f"  → New best conformance: {best_conformance:.3f} — saved best.pt"
+                    f"  → New best net profit: {best_net_profit:.1f} — saved best.pt"
                 )
 
             # Save eval log incrementally
@@ -533,7 +499,7 @@ def train(cfg: dict, resume_path: str = None, no_eval: bool = False):
     logger.info("=" * 60)
     logger.info(f"Training complete in {elapsed:.1f} minutes")
     logger.info(f"Final checkpoint: {ckpt_dir / 'final.pt'}")
-    logger.info(f"Best conformance: {best_conformance:.3f}")
+    logger.info(f"Best net profit: {best_net_profit:.1f}")
     if convergence_episode:
         logger.info(f"Convergence episode: {convergence_episode}")
     else:
@@ -543,7 +509,7 @@ def train(cfg: dict, resume_path: str = None, no_eval: bool = False):
         "training_log": pd.DataFrame(training_log),
         "eval_log": pd.DataFrame(eval_log) if eval_log else None,
         "convergence_episode": convergence_episode,
-        "best_conformance": best_conformance,
+        "best_net_profit": best_net_profit,
         "elapsed_min": elapsed,
     }
 
@@ -572,7 +538,7 @@ if __name__ == "__main__":
     results = train(cfg, resume_path=args.resume, no_eval=args.no_eval)
 
     print("\nSummary:")
-    print(f"  Best conformance rate : {results['best_conformance']:.3f}")
+    print(f"  Best net profit       : {results['best_net_profit']:.1f}")
     print(f"  Convergence episode   : {results['convergence_episode']}")
     print(f"  Training time         : {results['elapsed_min']:.1f} min")
     print(f"\nResults saved to: {cfg['results_dir']}")

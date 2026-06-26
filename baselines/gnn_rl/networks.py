@@ -100,11 +100,11 @@ class NetworkConfig:
     Attributes
     ----------
     node_feature_dim : int
-        Input features per hub node. Must match NEMWDREnv.NODE_FEATURE_DIM = 5.
-        Layout: [n_connected_norm, mean_soc, loc_x, loc_y, distance_norm]
-    zone_feature_dim : int
-        Zone-level features appended after GAT. Must match
-        NEMWDREnv.ZONE_FEATURE_DIM = 9.
+        Input features per hub node. Must match NEMDOEEnv.NODE_FEATURE_DIM = 9.
+        Layout: [doe_import_w_norm, doe_export_w_norm, occupancy,
+                 mean_soc, queue_length, equipment_cap_kw,
+                 rrp_norm, hour_of_day, day_of_week]
+        RRP is broadcast to all hub nodes — no separate zone feature block.
     embed_dim : int
         Hidden embedding dimension for node MLP and GAT layers.
     gat_heads : int
@@ -119,19 +119,23 @@ class NetworkConfig:
     critic_hidden : int
         Hidden units in critic MLP heads.
     price_min, price_max : float
-        Incentive price action bounds ($/MWh). Must match EnvConfig.
+        Incentive price action bounds ($/kWh). Must match EnvConfig.
+    equipment_cap_kw : float
+        Default per-hub equipment cap for actor tanh rescaling (kW).
+        The actor outputs signed dispatch in [-equipment_cap, +equipment_cap].
+        At runtime this is overridden per-hub from node feature [5].
     dropout : float
         Dropout rate applied after each GAT layer during training.
     """
-    node_feature_dim: int = 5
-    zone_feature_dim: int = 9
+    node_feature_dim: int = 9       # must match NEMDOEEnv.NODE_FEATURE_DIM
     embed_dim: int = 64
     gat_heads: int = 4
     gat_layers: int = 2
     actor_hidden: int = 128
     critic_hidden: int = 256
     price_min: float = 0.0
-    price_max: float = 500.0
+    price_max: float = 0.50         # $/kWh — matches EnvConfig.price_max
+    equipment_cap_kw: float = 100.0 # default cap; overridden per-hub at runtime
     dropout: float = 0.1
 
 
@@ -255,6 +259,10 @@ class NumpyActor:
     Numpy actor for shape validation.
     Produces deterministic actions (no reparameterisation trick).
     For training, use the PyTorch version.
+
+    Output: [dispatch_0_kw, ..., dispatch_{H-1}_kw, incentive_price_per_kwh]
+    Dispatch is signed kW via tanh rescaling to [-equipment_cap, +equipment_cap].
+    No zone_features argument — RRP is already in node feature [6].
     """
 
     def __init__(self, cfg: NetworkConfig, n_hubs: int):
@@ -263,45 +271,47 @@ class NumpyActor:
         self.encoder = NumpyGATEncoder(cfg)
         rng = np.random.default_rng(3)
 
-        # Per-hub dispatch head: embed_dim → 1 (sigmoid → [0,1])
+        # Per-hub dispatch head: embed_dim → 1 (tanh → signed kW)
         self.dispatch_W = rng.normal(
             0, 0.01, (cfg.embed_dim, 1)
         ).astype(np.float32)
 
-        # Price head: (embed_dim + zone_feature_dim) → 1
+        # Price head: embed_dim → 1 (mean-pooled, no zone features)
         self.price_W = rng.normal(
-            0, 0.01, (cfg.embed_dim + cfg.zone_feature_dim, 1)
+            0, 0.01, (cfg.embed_dim, 1)
         ).astype(np.float32)
 
     def forward(
         self,
-        node_features: np.ndarray,   # (H, node_feature_dim)
+        node_features: np.ndarray,   # (H, node_feature_dim=9)
         edge_index: np.ndarray,      # (2, E)
-        zone_features: np.ndarray,   # (zone_feature_dim,)
-    ) -> np.ndarray:                  # (H + 1,): [δ_0,...,δ_{H-1}, c_t]
+    ) -> np.ndarray:                  # (H + 1,): [dispatch_kw_0,..., price_per_kwh]
         # Stage 1+2: GAT encoding
         h = self.encoder.forward(node_features, edge_index)  # (H, embed_dim)
 
-        # Stage 3a-i: per-hub dispatch fractions
+        # Stage 3a-i: per-hub signed dispatch via tanh
+        # Equipment cap is node feature [5]; use cfg default for numpy fallback
         dispatch_logits = h @ self.dispatch_W   # (H, 1)
-        dispatch = _sigmoid(dispatch_logits).flatten()  # (H,) ∈ (0,1)
+        dispatch_kw = (
+            self.cfg.equipment_cap_kw * np.tanh(dispatch_logits)
+        ).flatten()   # (H,) ∈ [-equipment_cap_kw, +equipment_cap_kw]
 
-        # Stage 3a-ii: zone-level price
-        h_mean = h.mean(axis=0)  # (embed_dim,) — mean pool across hubs
-        price_input = np.concatenate([h_mean, zone_features])  # (embed_dim + zone_dim,)
-        price_raw = float((price_input @ self.price_W).item())
-        # Scale tanh output to [price_min, price_max]
+        # Stage 3a-ii: zone-level incentive price (mean-pool, no zone vec)
+        h_mean = h.mean(axis=0)                         # (embed_dim,)
+        price_raw = float((h_mean @ self.price_W).item())
         price_mid = (self.cfg.price_max + self.cfg.price_min) / 2
         price_range = (self.cfg.price_max - self.cfg.price_min) / 2
         price = price_mid + price_range * np.tanh(price_raw)
 
-        return np.concatenate([dispatch, [price]]).astype(np.float32)
+        return np.concatenate([dispatch_kw, [price]]).astype(np.float32)
 
 
 class NumpyCritic:
     """
     Numpy critic (Q-function) for shape validation.
     Takes full observation + action, returns scalar Q-value.
+    No zone_features — RRP is in node features; critic uses mean-pooled
+    graph embedding + full action vector only.
     """
 
     def __init__(self, cfg: NetworkConfig, n_hubs: int):
@@ -310,10 +320,10 @@ class NumpyCritic:
         self.encoder = NumpyGATEncoder(cfg)
         rng = np.random.default_rng(4)
 
-        # Input: mean-pooled graph embedding + zone features + full action
-        # action dim = H dispatch fractions + 1 price scalar
+        # Input: mean-pooled graph embedding + full action
+        # action dim = H signed dispatch targets + 1 price scalar
         action_dim = n_hubs + 1
-        critic_input_dim = cfg.embed_dim + cfg.zone_feature_dim + action_dim
+        critic_input_dim = cfg.embed_dim + action_dim
 
         self.W1 = rng.normal(
             0, 0.01, (critic_input_dim, cfg.critic_hidden)
@@ -324,16 +334,15 @@ class NumpyCritic:
 
     def forward(
         self,
-        node_features: np.ndarray,   # (H, node_feature_dim)
+        node_features: np.ndarray,   # (H, node_feature_dim=9)
         edge_index: np.ndarray,      # (2, E)
-        zone_features: np.ndarray,   # (zone_feature_dim,)
-        action: np.ndarray,          # (H + 1,)
+        action: np.ndarray,          # (H + 1,): signed dispatch kW + price
     ) -> float:
         h = self.encoder.forward(node_features, edge_index)   # (H, embed_dim)
         h_mean = h.mean(axis=0)                               # (embed_dim,)
 
-        # Concatenate: graph summary + zone state + action
-        critic_input = np.concatenate([h_mean, zone_features, action])
+        # Concatenate: graph summary + action (no separate zone vec)
+        critic_input = np.concatenate([h_mean, action])
         # Two-layer MLP
         hidden = np.maximum(0, critic_input @ self.W1)   # ReLU
         q_value = float((hidden @ self.W2).item())
@@ -423,10 +432,16 @@ def build_torch_networks(cfg: NetworkConfig, n_hubs: int):
 
         Two output heads:
         1. Dispatch head: per-hub, from each hub's GAT embedding.
-           Output: δ_i ∈ (0, 1) via sigmoid (deterministic) or
-                   sampled from N(μ_i, σ_i) → sigmoid (stochastic).
-        2. Price head: zone-level, from mean-pooled GAT embedding + zone features.
-           Output: c_t ∈ [price_min, price_max] via tanh rescaling.
+           Output: dispatch_i (kW) via tanh rescaling to
+                   [-equipment_cap_i, +equipment_cap_i].
+                   Negative = charge (import), positive = discharge (export).
+        2. Price head: zone-level, from mean-pooled GAT embedding.
+           Output: incentive_price ($/kWh) via tanh rescaling to
+                   [price_min, price_max].
+
+        No zone_features argument — RRP is broadcast into node feature [6]
+        so the GAT encoder already has full price information. The mean-pooled
+        embedding captures the zone-level summary for the price head.
 
         Both heads output (mean, log_std) for the reparameterisation trick.
         During evaluation, the deterministic mean action is used.
@@ -439,15 +454,16 @@ def build_torch_networks(cfg: NetworkConfig, n_hubs: int):
             self.encoder = GATEncoder(cfg)
 
             # Dispatch head: embed_dim → hidden → 2 (mean, log_std) per hub
+            # tanh output rescaled to [-equipment_cap, +equipment_cap]
             self.dispatch_head = nn.Sequential(
                 nn.Linear(cfg.embed_dim, cfg.actor_hidden),
                 nn.ReLU(),
                 nn.Linear(cfg.actor_hidden, 2),  # mean + log_std
             )
 
-            # Price head: (embed_dim + zone_feature_dim) → hidden → 2
+            # Price head: embed_dim → hidden → 2 (mean-pooled, no zone vec)
             self.price_head = nn.Sequential(
-                nn.Linear(cfg.embed_dim + cfg.zone_feature_dim, cfg.actor_hidden),
+                nn.Linear(cfg.embed_dim, cfg.actor_hidden),
                 nn.ReLU(),
                 nn.Linear(cfg.actor_hidden, 2),  # mean + log_std
             )
@@ -456,22 +472,23 @@ def build_torch_networks(cfg: NetworkConfig, n_hubs: int):
             self.log_std_min = -5.0
             self.log_std_max = 2.0
 
-        def forward(self, node_features, edge_index, zone_features,
+        def forward(self, node_features, edge_index, equipment_caps_kw=None,
                     deterministic=False):
             """
             Parameters
             ----------
-            node_features : Tensor (H, node_feature_dim)
+            node_features : Tensor (H, node_feature_dim=9)
             edge_index : Tensor (2, E)
-            zone_features : Tensor (zone_feature_dim,) or (B, zone_feature_dim)
+            equipment_caps_kw : Tensor (H,) or None
+                Per-hub equipment cap for tanh rescaling. If None, uses
+                cfg.equipment_cap_kw as a uniform fallback.
             deterministic : bool
                 If True, return mean action (evaluation mode).
-                If False, sample via reparameterisation (training mode).
 
             Returns
             -------
             action : Tensor (H + 1,)
-                [δ_0, ..., δ_{H-1}, c_t]
+                [dispatch_0_kw, ..., dispatch_{H-1}_kw, incentive_price_per_kwh]
             log_prob : Tensor (scalar)
                 Log probability of the sampled action (for SAC entropy term).
                 Returns 0 if deterministic=True.
@@ -482,6 +499,15 @@ def build_torch_networks(cfg: NetworkConfig, n_hubs: int):
             # GAT encoding
             h = self.encoder(node_features, edge_index)  # (H, embed_dim)
 
+            # Per-hub equipment caps for tanh rescaling
+            if equipment_caps_kw is None:
+                caps = torch.full(
+                    (self.n_hubs,), self.cfg.equipment_cap_kw,
+                    dtype=h.dtype, device=h.device
+                )
+            else:
+                caps = equipment_caps_kw   # (H,)
+
             # --- Dispatch head ---
             dispatch_out = self.dispatch_head(h)          # (H, 2)
             dispatch_mean = dispatch_out[:, 0]            # (H,)
@@ -489,23 +515,22 @@ def build_torch_networks(cfg: NetworkConfig, n_hubs: int):
                 self.log_std_min, self.log_std_max
             )
 
-            # --- Price head ---
+            # --- Price head (mean-pooled, no zone features) ---
             h_mean = h.mean(dim=0)                        # (embed_dim,)
-            price_input = torch.cat([h_mean, zone_features], dim=-1)
-            price_out = self.price_head(price_input)      # (2,)
+            price_out = self.price_head(h_mean)           # (2,)
             price_mean = price_out[0]
             price_log_std = price_out[1].clamp(self.log_std_min, self.log_std_max)
 
             if deterministic:
-                # Deterministic action for evaluation
-                dispatch = torch.sigmoid(dispatch_mean)
+                # Signed dispatch via tanh rescaling
+                dispatch_kw = caps * torch.tanh(dispatch_mean)
                 price_mid = (self.cfg.price_max + self.cfg.price_min) / 2
                 price_range = (self.cfg.price_max - self.cfg.price_min) / 2
                 price = price_mid + price_range * torch.tanh(price_mean)
-                action = torch.cat([dispatch, price.unsqueeze(0)])
+                action = torch.cat([dispatch_kw, price.unsqueeze(0)])
                 return action, torch.tensor(0.0)
 
-            # Reparameterisation trick: sample from N(mean, std)
+            # Reparameterisation trick
             dispatch_std = dispatch_log_std.exp()
             dispatch_eps = torch.randn_like(dispatch_mean)
             dispatch_pre_squash = dispatch_mean + dispatch_std * dispatch_eps
@@ -514,30 +539,29 @@ def build_torch_networks(cfg: NetworkConfig, n_hubs: int):
             price_eps = torch.randn_like(price_mean)
             price_pre_squash = price_mean + price_std * price_eps
 
-            # Squash dispatch to (0,1) via sigmoid
-            dispatch = torch.sigmoid(dispatch_pre_squash)
+            # Squash dispatch to signed kW via tanh × equipment_cap
+            tanh_dispatch = torch.tanh(dispatch_pre_squash)
+            dispatch_kw = caps * tanh_dispatch
 
             # Squash price to [price_min, price_max] via tanh rescaling
             price_mid = (self.cfg.price_max + self.cfg.price_min) / 2
             price_range = (self.cfg.price_max - self.cfg.price_min) / 2
-            price = price_mid + price_range * torch.tanh(price_pre_squash)
+            tanh_price = torch.tanh(price_pre_squash)
+            price = price_mid + price_range * tanh_price
 
-            action = torch.cat([dispatch, price.unsqueeze(0)])
+            action = torch.cat([dispatch_kw, price.unsqueeze(0)])
 
-            # Log probability (with change-of-variables correction for squashing)
-            # For dispatch (sigmoid squashing):
-            # log π(a) = log N(pre_squash) - Σ log |dσ/dx|
-            #          = log N(pre_squash) - Σ log(σ(x)(1-σ(x)))
+            # Log probability with change-of-variables correction for tanh squashing
+            # For dispatch: log π(a) = log N(pre_squash) - Σ log(1 - tanh²(x)) - Σ log(cap)
             dispatch_log_prob = (
                 -0.5 * dispatch_eps ** 2
                 - dispatch_log_std
                 - 0.5 * np.log(2 * np.pi)
-                - torch.log(dispatch * (1 - dispatch) + 1e-6)
+                - torch.log(1 - tanh_dispatch ** 2 + 1e-6)
+                - torch.log(caps + 1e-6)
             ).sum()
 
-            # For price (tanh squashing):
-            # log π(a) = log N(pre_squash) - Σ log(1 - tanh²(x)) - log(price_range)
-            tanh_price = torch.tanh(price_pre_squash)
+            # For price: log π(a) = log N(pre_squash) - log(1 - tanh²(x)) - log(price_range)
             price_log_prob = (
                 -0.5 * price_eps ** 2
                 - price_log_std
@@ -554,17 +578,18 @@ def build_torch_networks(cfg: NetworkConfig, n_hubs: int):
         """
         SAC Q-function (one of two twins).
 
-        Input: full observation (node features + zone features) + full action
+        Input: full observation (node features) + full action
         Output: scalar Q-value
 
-        The critic uses the same GAT encoder as the actor (separate weights)
-        to process the hub graph, then concatenates the mean-pooled embedding
-        with zone features and the full action vector before a 2-layer MLP.
+        The critic uses its own GAT encoder to process the hub graph, then
+        concatenates the mean-pooled embedding with the full action vector
+        before a 2-layer MLP. No separate zone feature block — RRP is
+        already encoded in node feature [6] of every hub node.
 
-        The full action vector includes both dispatch fractions (H values) and
-        the incentive price (1 value). This is critical: the Q-function must
-        evaluate the joint quality of the dispatch allocation AND the price,
-        since these interact through the participation model.
+        The full action vector includes both signed dispatch targets (H values,
+        kW) and the incentive price (1 value, $/kWh). This is critical: the
+        Q-function must evaluate the joint quality of the dispatch allocation
+        AND the price, since these interact through the participation model.
         """
 
         def __init__(self, cfg: NetworkConfig, n_hubs: int):
@@ -573,11 +598,10 @@ def build_torch_networks(cfg: NetworkConfig, n_hubs: int):
             self.n_hubs = n_hubs
             self.encoder = GATEncoder(cfg)
 
-            action_dim = n_hubs + 1  # H dispatch fractions + 1 price
+            action_dim = n_hubs + 1  # H signed dispatch kW + 1 price scalar
             critic_input_dim = (
                 cfg.embed_dim        # mean-pooled graph embedding
-                + cfg.zone_feature_dim  # zone-level state
-                + action_dim         # full action
+                + action_dim         # full action (no zone feature block)
             )
 
             self.mlp = nn.Sequential(
@@ -588,14 +612,14 @@ def build_torch_networks(cfg: NetworkConfig, n_hubs: int):
                 nn.Linear(cfg.critic_hidden, 1),
             )
 
-        def forward(self, node_features, edge_index, zone_features, action):
+        def forward(self, node_features, edge_index, action):
             """
             Parameters
             ----------
-            node_features : Tensor (H, node_feature_dim)
+            node_features : Tensor (H, node_feature_dim=9)
             edge_index : Tensor (2, E)
-            zone_features : Tensor (zone_feature_dim,)
             action : Tensor (H + 1,)
+                [dispatch_0_kw, ..., dispatch_{H-1}_kw, incentive_price_per_kwh]
 
             Returns
             -------
@@ -604,7 +628,7 @@ def build_torch_networks(cfg: NetworkConfig, n_hubs: int):
             import torch
             h = self.encoder(node_features, edge_index)  # (H, embed_dim)
             h_mean = h.mean(dim=0)                       # (embed_dim,)
-            critic_input = torch.cat([h_mean, zone_features, action])
+            critic_input = torch.cat([h_mean, action])   # no zone_features
             return self.mlp(critic_input)                # (1,)
 
     actor = GATActor(cfg, n_hubs)

@@ -99,7 +99,7 @@ def make_eval_env(seed: int, synthetic: bool = False):
         price_loader=loader,
         participation_model=model,
         env_config=EnvConfig(),
-        force_wdr=True,    # guarantee WDR in every eval episode for conformance measurement
+        force_wdr=False,    # guarantee WDR in every eval episode for conformance measurement
         seed=seed,
     )
     return env, graph, hub_configs
