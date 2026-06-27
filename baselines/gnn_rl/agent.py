@@ -218,7 +218,7 @@ class SACGNNAgent:
 
         # Entropy temperature α (learnable, log-parameterised for stability)
         self.log_alpha = torch.tensor(
-            np.log(0.1), dtype=torch.float32, requires_grad=True
+            np.log(1.0), dtype=torch.float32, requires_grad=True
         )
 
         # Optimisers
@@ -240,7 +240,7 @@ class SACGNNAgent:
         self.actor = NumpyActor(self.net_cfg, self.n_hubs)
         self.critic1 = NumpyCritic(self.net_cfg, self.n_hubs)
         self.critic2 = NumpyCritic(self.net_cfg, self.n_hubs)
-        self.log_alpha = np.log(0.1)
+        self.log_alpha = np.log(1.0)
         self._edge_index_t = self.graph_data.edge_index
         self._edge_attr_t = self.graph_data.edge_attr
 
