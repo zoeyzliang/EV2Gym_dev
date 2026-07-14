@@ -141,7 +141,9 @@ def parse_args():
     parser.add_argument("--synthetic", action="store_true",
                         help="Use synthetic prices (offline mode)")
     parser.add_argument("--resume", type=str, default=None,
-                        help="Path to checkpoint to resume from")
+                        help="Path to checkpoint .pt file to resume from")
+    parser.add_argument("--start_episode", type=int, default=None,
+                        help="Episode to resume from (e.g. 1601). Inferred from checkpoint if not set.")
     parser.add_argument("--results_dir", type=str, default=None)
     parser.add_argument("--no_eval", action="store_true",
                         help="Skip evaluation runs (faster, less informative)")
@@ -289,7 +291,7 @@ def evaluate(
 # Training loop
 # ---------------------------------------------------------------------------
 
-def train(cfg: dict, resume_path: str = None, no_eval: bool = False):
+def train(cfg: dict, resume_path: str = None, no_eval: bool = False, start_episode: int = 1):
     """Main training loop."""
 
     # ── Setup output directories ─────────────────────────────────────
@@ -349,6 +351,10 @@ def train(cfg: dict, resume_path: str = None, no_eval: bool = False):
     if resume_path:
         logger.info(f"Resuming from checkpoint: {resume_path}")
         agent.load(resume_path)
+        if start_episode <= 1 and agent._total_steps > 0:
+            inferred = agent._total_steps // 288 + 1
+            logger.info(f"Inferred start episode {inferred} from checkpoint total_steps={agent._total_steps}")
+            start_episode = inferred
 
     logger.info(f"Agent summary: {agent.summary()}")
 
@@ -362,12 +368,18 @@ def train(cfg: dict, resume_path: str = None, no_eval: bool = False):
     start_time = time.time()
     n_episodes = cfg["n_episodes"]
 
-    logger.info(f"Starting training: {n_episodes} episodes, "
-                f"{len(hub_configs)} hubs, obs_dim={obs_dim}")
+    ep_start = max(1, start_episode)
+    ep_end   = n_episodes
+    remaining = ep_end - ep_start + 1
+
+    if ep_start > 1:
+        logger.info(f"Resuming from episode {ep_start} — {remaining} episodes remaining to reach {ep_end}")
+    else:
+        logger.info(f"Starting training: {n_episodes} episodes, {len(hub_configs)} hubs, obs_dim={obs_dim}")
     logger.info("=" * 60)
 
     # ── Main training loop ────────────────────────────────────────────
-    for episode in range(1, n_episodes + 1):
+    for episode in range(ep_start, ep_end + 1):
 
         obs, _ = train_env.reset()
         done = False
@@ -535,7 +547,8 @@ if __name__ == "__main__":
     # Set seeds for reproducibility
     np.random.seed(cfg["seed"])
 
-    results = train(cfg, resume_path=args.resume, no_eval=args.no_eval)
+    start_ep = args.start_episode or 1
+    results = train(cfg, resume_path=args.resume, no_eval=args.no_eval, start_episode=start_ep)
 
     print("\nSummary:")
     print(f"  Best net profit       : {results['best_net_profit']:.1f}")
