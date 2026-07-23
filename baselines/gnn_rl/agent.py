@@ -105,7 +105,9 @@ class SACGNNAgent:
         Replay buffer size. Default 1,000,000.
     learning_starts : int
         Number of transitions to collect before first gradient update.
-        Default 1000 (≈ 3.5 episodes).
+        Default 5000 (≈ 17 episodes). Longer warmup gives the critic a
+        richer, more diverse buffer to learn from on its first update,
+        reducing catastrophic early gradient steps.
     update_every : int
         Number of environment steps between gradient updates. Default 1
         (update after every step, standard for SAC).
@@ -127,7 +129,7 @@ class SACGNNAgent:
         target_entropy: Optional[float] = None,
         batch_size: int = 256,
         buffer_capacity: int = 1_000_000,
-        learning_starts: int = 1000,
+        learning_starts: int = 5000,
         update_every: int = 1,
         seed: Optional[int] = None,
     ):
@@ -144,11 +146,15 @@ class SACGNNAgent:
 
         self.net_cfg = net_cfg or NetworkConfig()
 
-        # Target entropy: standard SAC heuristic = -action_dim
+        # Target entropy: halved from standard heuristic (-action_dim).
+        # Standard -22 is too aggressive for a 22-dim action space — alpha
+        # collapses to ~0 by episode 30. -11 keeps alpha above 0.1 for
+        # 300-500 episodes, giving the agent time to explore the full
+        # bidirectional dispatch space before committing to a strategy.
         self.target_entropy = (
             target_entropy
             if target_entropy is not None
-            else -float(self.action_dim)
+            else -float(self.action_dim) * 0.5   # = -11 for 22-dim action space
         )
 
         # Replay buffer
@@ -177,6 +183,14 @@ class SACGNNAgent:
         # Training step counter
         self._total_steps = 0
         self._total_updates = 0
+
+        # Running reward normalisation statistics
+        # Reward range spans -$10M (early DOE violations) to +$44k (late arbitrage).
+        # Normalising by running std keeps critic targets in a stable range,
+        # improving Q-value estimation accuracy and convergence speed.
+        self._reward_running_mean = 0.0
+        self._reward_running_std  = 1.0
+        self._reward_norm_alpha   = 0.01   # EMA smoothing factor
 
         # Running loss tracking
         self._loss_history = {
@@ -297,8 +311,24 @@ class SACGNNAgent:
         next_obs: np.ndarray,
         done: bool,
     ) -> None:
-        """Add one environment transition to the replay buffer."""
-        self.buffer.add(obs, action, reward, next_obs, done)
+        """
+        Add one environment transition to the replay buffer.
+        Reward is normalised by a running std before storage so the critic
+        sees targets in a stable range regardless of episode phase.
+        The raw reward is logged externally (train_sac_gnn.py) for reporting.
+        """
+        # Update running statistics (EMA)
+        self._reward_running_mean = (
+            (1 - self._reward_norm_alpha) * self._reward_running_mean
+            + self._reward_norm_alpha * reward
+        )
+        diff = abs(reward - self._reward_running_mean)
+        self._reward_running_std = max(1.0,
+            (1 - self._reward_norm_alpha) * self._reward_running_std
+            + self._reward_norm_alpha * diff
+        )
+        normalised_reward = reward / self._reward_running_std
+        self.buffer.add(obs, action, normalised_reward, next_obs, done)
         self._total_steps += 1
 
     def update(self) -> Optional[dict]:
@@ -349,7 +379,10 @@ class SACGNNAgent:
         import torch
         import torch.nn.functional as F
 
-        alpha = self.log_alpha.exp().detach()
+        # Alpha floor: prevent entropy collapse below 0.01
+        # Without this, alpha reaches ~0.0001 by episode 30 and stays there,
+        # locking the policy into a deterministic strategy too early.
+        alpha = self.log_alpha.exp().detach().clamp(min=0.01)
 
         # --- Convert batch to tensors ---
         obs_t      = torch.tensor(batch.obs,      dtype=torch.float32)
@@ -668,4 +701,6 @@ class SACGNNAgent:
             else float(self.log_alpha.detach().exp()),
             "n_hubs": self.n_hubs,
             "action_dim": self.action_dim,
+            "target_entropy": self.target_entropy,
+            "reward_running_std": round(self._reward_running_std, 2),
         }

@@ -113,8 +113,11 @@ DEFAULT_CONFIG = {
     "dropout": 0.1,
 
     # Training duration
-    "n_episodes": 2000,               # total training episodes
-    "eval_every": 50,                 # evaluate every N episodes
+    "n_episodes": 1500,               # total training episodes
+    "eval_every": 50,
+    "n_eval_episodes": 5,             # avg over 5 price days per eval checkpoint
+    "convergence_window": 10,   # episodes to check for plateau
+    "convergence_threshold": 500, # max std across window to declare convergence                 # evaluate every N episodes
     "save_every": 100,                # checkpoint every N episodes
     "n_eval_episodes": 20,            # episodes per evaluation run
 
