@@ -46,10 +46,6 @@ class PriceLoader:
         NEM region identifier. Default "VIC1".
     cache_dir : str or Path
         Directory for Parquet cache files.
-    zone_peak_mw : float
-        VSR zone maximum aggregate dispatch capacity. Passed to WDR generator.
-    wdr_params : dict, optional
-        Override WDR_DEFAULTS for event generator.
     seed : int, optional
         RNG seed for reproducibility.
 

@@ -83,9 +83,9 @@ DEFAULT_CONFIG = {
     "cache_dir": "data/nem_cache",
     "graph_path": "data/graphs/inner_melbourne.pkl",
     "price_start": "2022-01-01",
-    "price_end": "2023-12-31",        # training period
-    "eval_price_start": "2024-01-01", # held-out evaluation period
-    "eval_price_end": "2024-12-31",
+    "price_end":   "2023-12-31",      # 2 years training
+    "eval_price_start": "2024-01-01", # held-out: full 2024
+    "eval_price_end":   "2024-12-31",
 
     # Participation model betas (§4.2.2, calibrated from Liu et al. 2025)
     "beta_0": -2.20,
@@ -119,15 +119,11 @@ DEFAULT_CONFIG = {
     "convergence_window": 10,   # episodes to check for plateau
     "convergence_threshold": 500, # max std across window to declare convergence                 # evaluate every N episodes
     "save_every": 100,                # checkpoint every N episodes
-    "n_eval_episodes": 20,            # episodes per evaluation run
 
-    # Convergence criterion (for RQ4 convergence speed metric)
-    "convergence_threshold": 0.90,    # fraction of asymptotic reward
-    "convergence_window": 100,        # rolling window to measure convergence
 
     # Misc
     "seed": 42,
-    "results_dir": "results/sac_gnn",
+    "results_dir": "results/sac_gnn_real",  # separate from synthetic runs
     "synthetic": False,
 }
 
