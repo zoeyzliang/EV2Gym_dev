@@ -214,10 +214,78 @@ class PriceLoader:
     # Episode sampling
     # ------------------------------------------------------------------
 
+    def build_curriculum_index(self) -> None:
+        """
+        Pre-classify all loaded days into volatility tiers for curriculum sampling.
+
+        Tiers are defined by the daily standard deviation of RRP ($/MWh):
+          Tier 1 — Calm:     std < $100/MWh  — safe early training days
+          Tier 2 — Normal:   $100 ≤ std < $500
+          Tier 3 — Volatile: $500 ≤ std < $2000
+          Tier 4 — Extreme:  std ≥ $2000     — spikes + negative RRP events
+
+        Called automatically on first sample_episode() call if not already built.
+        Stored in self._tier_days: dict[int, list[date]].
+        """
+        if self._price_df is None:
+            return
+
+        df = self._price_df
+        date_counts = df.groupby(df.index.date).size()
+        full_days = date_counts[date_counts >= self.STEPS_PER_DAY].index
+
+        tier_days = {1: [], 2: [], 3: [], 4: []}
+        for d in full_days:
+            mask = df.index.date == d
+            std = float(df.loc[mask, "spot_price"].std())
+            if std < 100:
+                tier_days[1].append(d)
+            elif std < 500:
+                tier_days[2].append(d)
+            elif std < 2000:
+                tier_days[3].append(d)
+            else:
+                tier_days[4].append(d)
+
+        self._tier_days = tier_days
+        counts = {t: len(v) for t, v in tier_days.items()}
+        logger.info(
+            f"Curriculum index built: "
+            f"Tier1(calm)={counts[1]} "
+            f"Tier2(normal)={counts[2]} "
+            f"Tier3(volatile)={counts[3]} "
+            f"Tier4(extreme)={counts[4]} days"
+        )
+
+    def _curriculum_tier(self, episode: int, total_episodes: int) -> int:
+        """
+        Return the curriculum tier for the current training episode.
+
+        Tier schedule (aligned to master summary training strategy §3):
+          0–20%  of training → Tier 1 only  (calm days)
+          20–50% of training → Tier 1+2     (normal days)
+          50–80% of training → Tier 1+2+3   (volatile days)
+          80–100% of training → all tiers    (full NEM distribution)
+
+        This progressive exposure prevents the catastrophic early losses
+        (−$10M at episode 10) that destabilised the synthetic-price runs.
+        """
+        progress = episode / max(total_episodes, 1)
+        if progress < 0.20:
+            return 1
+        elif progress < 0.50:
+            return 2
+        elif progress < 0.80:
+            return 3
+        else:
+            return 4
+
     def sample_episode(
         self,
         date: Optional[str] = None,
         force_wdr: bool = False,   # retained for API compatibility; unused
+        episode: Optional[int] = None,
+        total_episodes: Optional[int] = None,
     ) -> pd.DataFrame:
         """
         Sample a single 288-step (24-hour) price episode for RL training.
@@ -225,44 +293,68 @@ class PriceLoader:
         Parameters
         ----------
         date : str, optional
-            "YYYY-MM-DD" of the target day. If None, samples a random day.
+            "YYYY-MM-DD" — if set, samples this specific day (used for
+            fixed eval days). Ignores curriculum.
         force_wdr : bool
-            Unused — retained for API compatibility. WDR logic has been
-            removed. The agent operates as a price-taker with no AEMO
-            dispatch target (master summary §2, Option A).
+            Unused — retained for API compatibility.
+        episode : int, optional
+            Current training episode number. Used for curriculum sampling.
+            If None, samples uniformly at random (no curriculum).
+        total_episodes : int, optional
+            Total training episodes. Required when episode is set.
 
         Returns
         -------
         pd.DataFrame
-            288 rows, index = 5-minute timestamps, columns:
-              - spot_price (float): NEM spot price $/MWh
+            288 rows × [spot_price], indexed by 5-minute timestamps.
+
+        Curriculum behaviour
+        --------------------
+        When episode and total_episodes are both provided, days are sampled
+        from the curriculum tier appropriate for the current training progress.
+        Early episodes see only calm days (std < $100/MWh); later episodes
+        progressively include volatile and extreme spike days.
+
+        This compresses DOE constraint learning from ~800 to ~300 episodes
+        by avoiding catastrophic early losses from random spike days.
         """
         if self._price_df is None:
             raise RuntimeError(
                 "No price data loaded. Call fetch_and_cache() or load_synthetic() first."
             )
 
-        prices_day = self._sample_price_day(date)
+        # Build curriculum index on first use
+        if not hasattr(self, '_tier_days') or self._tier_days is None:
+            self.build_curriculum_index()
 
-        # Return only spot_price — no WDR/dispatch target columns.
-        # The agent is a price-taker: it observes RRP and sets its own
-        # dispatch position. AEMO does not issue dispatch targets to the
-        # aggregator in this model (Option A, master summary §2).
-        episode = prices_day.reset_index(drop=False)
-        episode.columns = ["timestamp", "spot_price"]
-        episode = episode.set_index("timestamp")
+        prices_day = self._sample_price_day(
+            date=date,
+            episode=episode,
+            total_episodes=total_episodes,
+        )
 
-        return episode
+        episode_df = prices_day.reset_index(drop=False)
+        episode_df.columns = ["timestamp", "spot_price"]
+        episode_df = episode_df.set_index("timestamp")
 
-    def _sample_price_day(self, date: Optional[str]) -> pd.Series:
+        return episode_df
+
+    def _sample_price_day(
+        self,
+        date: Optional[str] = None,
+        episode: Optional[int] = None,
+        total_episodes: Optional[int] = None,
+    ) -> pd.Series:
         """
-        Extract or randomly sample a 288-step price series from loaded data.
+        Extract or sample a 288-step price series from loaded data.
 
-        If the requested date is missing from cache (e.g. public holiday with
-        no data), falls back to a random day with a warning.
+        If date is specified: return that exact date (for fixed eval days).
+        If episode/total_episodes provided: curriculum sampling by tier.
+        Otherwise: uniform random day.
         """
         df = self._price_df
 
+        # Fixed date requested (eval mode)
         if date is not None:
             target = pd.Timestamp(date)
             mask = df.index.date == target.date()
@@ -277,6 +369,23 @@ class PriceLoader:
 
             return day_prices.iloc[: self.STEPS_PER_DAY]
 
+        # Curriculum sampling (training mode with episode info)
+        if (episode is not None
+                and total_episodes is not None
+                and hasattr(self, '_tier_days')
+                and self._tier_days is not None):
+            max_tier = self._curriculum_tier(episode, total_episodes)
+            # Pool = all days up to and including current max tier
+            pool = []
+            for t in range(1, max_tier + 1):
+                pool.extend(self._tier_days.get(t, []))
+
+            if pool:
+                chosen_date = self._rng.choice(pool)
+                mask = df.index.date == chosen_date
+                return df.loc[mask, "spot_price"].iloc[: self.STEPS_PER_DAY]
+
+        # Fallback: uniform random day
         return self._random_day(df)
 
     def _random_day(self, df: pd.DataFrame) -> pd.Series:

@@ -53,7 +53,7 @@ def _try_torch():
 
 
 def build_flat_networks(obs_dim: int, action_dim: int,
-                        hidden_dim: int = 256, price_max: float = 500.0):
+                        hidden_dim: int = 256, price_max: float = 0.50):  # $/kWh
     """Build flat MLP actor and twin critics."""
     import torch
     import torch.nn as nn
@@ -98,25 +98,28 @@ def build_flat_networks(obs_dim: int, action_dim: int,
             price_log_std = price_out[1].clamp(self.log_std_min, self.log_std_max)
 
             if deterministic:
-                dispatch = torch.sigmoid(dispatch_mean)
+                dispatch_kw = 100.0 * torch.tanh(dispatch_mean)  # signed kW
                 price = (self.price_max / 2) + (self.price_max / 2) * torch.tanh(price_mean)
-                return torch.cat([dispatch, price.unsqueeze(0)]), torch.tensor(0.0)
+                return torch.cat([dispatch_kw, price.unsqueeze(0)]), torch.tensor(0.0)
 
             dispatch_eps = torch.randn_like(dispatch_mean)
             dispatch_pre = dispatch_mean + dispatch_log_std.exp() * dispatch_eps
-            dispatch = torch.sigmoid(dispatch_pre)
+            tanh_d = torch.tanh(dispatch_pre)
+            dispatch_kw = 100.0 * tanh_d  # signed kW via tanh rescaling
 
             price_eps = torch.randn_like(price_mean)
             price_pre = price_mean + price_log_std.exp() * price_eps
             price_mid = self.price_max / 2
             price = price_mid + price_mid * torch.tanh(price_pre)
 
-            action = torch.cat([dispatch, price.unsqueeze(0)])
+            action = torch.cat([dispatch_kw, price.unsqueeze(0)])
 
+            import math
             dispatch_log_prob = (
                 -0.5 * dispatch_eps ** 2 - dispatch_log_std
-                - 0.5 * np.log(2 * np.pi)
-                - torch.log(dispatch * (1 - dispatch) + 1e-6)
+                - 0.5 * math.log(2 * math.pi)
+                - torch.log(1 - tanh_d ** 2 + 1e-6)
+                - math.log(100.0)
             ).sum()
 
             tanh_price = torch.tanh(price_pre)
@@ -184,7 +187,7 @@ class SACFlatAgent:
         buffer_capacity: int = 500_000,
         learning_starts: int = 1000,
         update_every: int = 1,
-        price_max: float = 500.0,
+        price_max: float = 0.50,    # $/kWh
         seed: Optional[int] = None,
     ):
         self.obs_dim = obs_dim
@@ -241,9 +244,9 @@ class SACFlatAgent:
         for p in self.target_critic2.parameters():
             p.requires_grad = False
 
-        self.log_alpha = torch.tensor(np.log(0.1), dtype=torch.float32,
+        self.log_alpha = torch.tensor(np.log(1.0), dtype=torch.float32,
                                        requires_grad=True)
-        self.target_entropy = -float(self.action_dim)
+        self.target_entropy = -float(self.action_dim) * 0.5  # = -11
 
         self.actor_opt = optim.Adam(self.actor.parameters(), lr=lr_actor)
         self.critic1_opt = optim.Adam(self.critic1.parameters(), lr=lr_critic)
@@ -263,9 +266,8 @@ class SACFlatAgent:
         action[-1] = np.clip(action[-1], 0.0, self.price_max)
         return action.astype(np.float32)
 
-    def store_transition(self, obs, action, reward, next_obs,
-                         done, wdr_active=False):
-        self.buffer.add(obs, action, reward, next_obs, done, wdr_active)
+    def store_transition(self, obs, action, reward, next_obs, done):
+        self.buffer.add(obs, action, reward, next_obs, done)
         self._total_steps += 1
 
     def update(self):
@@ -282,7 +284,7 @@ class SACFlatAgent:
         import torch.nn.functional as F
 
         batch = self.buffer.sample(self.batch_size)
-        alpha = self.log_alpha.exp().detach()
+        alpha = self.log_alpha.exp().detach().clamp(min=0.01)
 
         obs_t = torch.tensor(batch.obs, dtype=torch.float32)
         act_t = torch.tensor(batch.actions, dtype=torch.float32)

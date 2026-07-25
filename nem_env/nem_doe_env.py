@@ -262,10 +262,25 @@ class NEMDOEEnv(gym.Env):
 
         Samples a fresh price day from the price loader, initialises hub
         states and DOE limits, returns first observation.
+
+        Options
+        -------
+        options dict keys (all optional):
+          "date" : str "YYYY-MM-DD"
+              Request a specific price day (used for fixed eval days).
+          "episode" : int
+              Current training episode — passed to curriculum sampler.
+          "total_episodes" : int
+              Total training episodes — passed to curriculum sampler.
         """
         super().reset(seed=seed)
 
-        self._episode_df = self.price_loader.sample_episode(force_wdr=False)
+        opts = options or {}
+        self._episode_df = self.price_loader.sample_episode(
+            date=opts.get("date", None),
+            episode=opts.get("episode", None),
+            total_episodes=opts.get("total_episodes", None),
+        )
         self._step_idx = 0
         self._doe_step = 0
         self._hub_states = self._init_hub_states()

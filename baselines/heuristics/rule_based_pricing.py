@@ -18,7 +18,7 @@ outperforms this simple rule.
 """
 
 import numpy as np
-from nem_env.nem_wdr_env import NEMWDREnv
+from nem_env.nem_doe_env import NEMDOEEnv
 
 
 class RuleBasedPricingBaseline:
@@ -47,7 +47,7 @@ class RuleBasedPricingBaseline:
         price_fraction: float = 0.5,
         dispatch_fraction: float = 1.0,
         price_min: float = 0.0,
-        price_max: float = 500.0,
+        price_max: float = 0.50,   # $/kWh
     ):
         self.n_hubs = n_hubs
         self.price_fraction = price_fraction
@@ -56,30 +56,34 @@ class RuleBasedPricingBaseline:
         self.price_max = price_max
         self.name = "RuleBasedPricing"
 
-    def select_action(self, obs: np.ndarray, env: NEMWDREnv) -> np.ndarray:
+    def select_action(self, obs: np.ndarray, env: NEMDOEEnv) -> np.ndarray:
         """
         Select action from observation.
 
         Price: price_fraction × current spot price, clipped to [min, max].
         Dispatch: uniform dispatch_fraction across all hubs.
 
-        The spot price is extracted from zone-level features (index 0,
-        normalised by price_normalise_by=500 in nem_wdr_env.py).
+        RRP is node feature [6], normalised by rrp_clip_high=20300 $/MWh.
+        No zone features — RRP is broadcast to all hub nodes.
         """
-        _, zone_feats = env.obs_to_node_and_zone(obs)
+        node_feats = env.obs_to_node_features(obs)  # (H, 9)
 
-        # Zone feature index 0 = spot_price / price_normalise_by
-        spot_price_norm = float(zone_feats[0])
-        spot_price = spot_price_norm * 500.0   # denormalise
+        # RRP: feature [6], denormalise
+        spot_price_norm = float(node_feats[0, 6])
+        spot_price = spot_price_norm * env.cfg.rrp_clip_high   # $/MWh
 
         # Incentive price: fraction of spot price
         incentive_price = float(np.clip(
-            self.price_fraction * max(spot_price, 0.0),
+            self.price_fraction * max(spot_price, 0.0) / 1000.0,  # $/MWh → $/kWh
             self.price_min,
             self.price_max,
         ))
 
-        dispatch = np.full(self.n_hubs, self.dispatch_fraction, dtype=np.float32)
+        # Signed dispatch: discharge at full cap when RRP > incentive price
+        if spot_price > incentive_price * 1000.0:  # compare $/MWh
+            dispatch = np.full(self.n_hubs, self.dispatch_fraction * 100.0, dtype=np.float32)  # kW
+        else:
+            dispatch = np.full(self.n_hubs, -self.dispatch_fraction * 100.0, dtype=np.float32)  # charge
         action = np.append(dispatch, incentive_price).astype(np.float32)
         return action
 
