@@ -87,9 +87,9 @@ def build_flat_networks(obs_dim: int, action_dim: int,
             import torch
             h = self.shared(obs)
 
-            dispatch_out = self.dispatch_head(h).reshape(-1, self.n_hubs, 2)
-            dispatch_mean = dispatch_out[..., 0].squeeze(0)
-            dispatch_log_std = dispatch_out[..., 1].squeeze(0).clamp(
+            dispatch_out = self.dispatch_head(h).view(self.n_hubs, 2)
+            dispatch_mean = dispatch_out[:, 0]
+            dispatch_log_std = dispatch_out[:, 1].clamp(
                 self.log_std_min, self.log_std_max
             )
 
@@ -361,7 +361,7 @@ class SACFlatAgent:
             "critic_loss": float((c1_loss + c2_loss) / 2),
             "actor_loss": float(actor_loss),
             "alpha_loss": float(alpha_loss),
-            "alpha": float(self.log_alpha.exp()),
+            "alpha": float(self.log_alpha.detach().exp()),
         }
 
     def save(self, path: str):
