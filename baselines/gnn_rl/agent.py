@@ -464,7 +464,7 @@ class SACGNNAgent:
             "critic_loss": float((critic1_loss + critic2_loss) / 2),
             "actor_loss": float(actor_loss),
             "alpha_loss": float(alpha_loss),
-            "alpha": float(self.log_alpha.exp()),
+            "alpha": float(self.log_alpha.detach().exp()),
         }
 
     # ------------------------------------------------------------------
