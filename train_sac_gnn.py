@@ -8,6 +8,15 @@ training loop with logging, checkpointing, and early stopping.
 
 Usage
 -----
+    # Train SAC-GNN (default)
+    python train_sac_gnn.py
+
+    # Train SAC-GCN ablation
+    python train_sac_gnn.py --agent sac_gcn
+
+    # Train SAC-Flat ablation
+    python train_sac_gnn.py --agent sac_flat
+
     # Train with real AEMO data (recommended for thesis experiments)
     python train_sac_gnn.py
 
@@ -123,6 +132,7 @@ DEFAULT_CONFIG = {
 
     # Misc
     "seed": 42,
+    "agent": "sac_gnn",                    # sac_gnn | sac_gcn | sac_flat
     "results_dir": "results/sac_gnn_real",  # separate from synthetic runs
     "synthetic": False,
 }
@@ -134,6 +144,9 @@ DEFAULT_CONFIG = {
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train SAC-GNN agent")
+    parser.add_argument("--agent", type=str, default="sac_gnn",
+                        choices=["sac_gnn", "sac_gcn", "sac_flat"],
+                        help="Agent architecture to train (default: sac_gnn)")
     parser.add_argument("--episodes", type=int, default=None,
                         help="Number of training episodes")
     parser.add_argument("--seed", type=int, default=None)
@@ -397,8 +410,10 @@ def train(cfg: dict, resume_path: str = None, no_eval: bool = False, start_episo
         dropout=cfg["dropout"],
     )
 
-    agent = SACGNNAgent(
-        n_hubs=len(hub_configs),
+    agent_type = cfg.get("agent", "sac_gnn")
+    n_hubs     = len(hub_configs)
+    agent_kwargs = dict(
+        n_hubs=n_hubs,
         graph_data=graph,
         obs_dim=obs_dim,
         net_cfg=net_cfg,
@@ -413,6 +428,31 @@ def train(cfg: dict, resume_path: str = None, no_eval: bool = False, start_episo
         update_every=cfg["update_every"],
         seed=cfg["seed"],
     )
+
+    if agent_type == "sac_gcn":
+        from baselines.gnn_rl.sac_gcn import SACGCNAgent
+        agent = SACGCNAgent(**agent_kwargs)
+        logger.info("Architecture: SAC-GCN (GCN encoder — fixed aggregation)")
+    elif agent_type == "sac_flat":
+        from baselines.flat_mlp.sac_flat import SACFlatAgent
+        agent = SACFlatAgent(
+            obs_dim=obs_dim,
+            action_dim=n_hubs + 1,
+            gamma=cfg["gamma"],
+            tau=cfg["tau"],
+            lr_actor=cfg["lr_actor"],
+            lr_critic=cfg["lr_critic"],
+            lr_alpha=cfg["lr_alpha"],
+            batch_size=cfg["batch_size"],
+            buffer_capacity=cfg["buffer_capacity"],
+            learning_starts=cfg["learning_starts"],
+            update_every=cfg["update_every"],
+            seed=cfg["seed"],
+        )
+        logger.info("Architecture: SAC-Flat (MLP only — no graph encoder)")
+    else:
+        agent = SACGNNAgent(**agent_kwargs)
+        logger.info("Architecture: SAC-GNN (GAT encoder — learned attention)")
 
     if resume_path:
         logger.info(f"Resuming from checkpoint: {resume_path}")
@@ -616,10 +656,14 @@ if __name__ == "__main__":
         cfg["n_episodes"] = args.episodes
     if args.seed is not None:
         cfg["seed"] = args.seed
+    cfg["agent"] = args.agent
     if args.synthetic:
         cfg["synthetic"] = True
     if args.results_dir is not None:
         cfg["results_dir"] = args.results_dir
+    # Auto-set results_dir based on agent if not explicitly set
+    elif args.agent != "sac_gnn":
+        cfg["results_dir"] = f"results/{args.agent}_real"
 
     # Set seeds for reproducibility
     np.random.seed(cfg["seed"])
