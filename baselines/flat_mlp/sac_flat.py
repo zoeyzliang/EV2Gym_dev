@@ -87,9 +87,9 @@ def build_flat_networks(obs_dim: int, action_dim: int,
             import torch
             h = self.shared(obs)
 
-            dispatch_out = self.dispatch_head(h).view(self.n_hubs, 2)
-            dispatch_mean = dispatch_out[:, 0]
-            dispatch_log_std = dispatch_out[:, 1].clamp(
+            dispatch_out = self.dispatch_head(h).view(-1, self.n_hubs, 2)
+            dispatch_mean = dispatch_out[..., 0].squeeze(0)
+            dispatch_log_std = dispatch_out[..., 1].squeeze(0).clamp(
                 self.log_std_min, self.log_std_max
             )
 
