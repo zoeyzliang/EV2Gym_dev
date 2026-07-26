@@ -201,7 +201,7 @@ class SACFlatAgent:
         self.price_max = price_max
         self.name = "SAC-Flat"
 
-        from .replay_buffer import ReplayBuffer
+        from baselines.gnn_rl.replay_buffer import ReplayBuffer
         self.buffer = ReplayBuffer(
             obs_dim=obs_dim,
             action_dim=action_dim,
