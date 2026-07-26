@@ -84,53 +84,76 @@ def build_flat_networks(obs_dim: int, action_dim: int,
             self.n_hubs = n_hubs
 
         def forward(self, obs, deterministic=False):
-            import torch
-            h = self.shared(obs)
+            """
+            Forward pass handling both single obs (H*9,) and batched (B, H*9).
+            Always returns action (H+1,) for single, (B, H+1) for batch.
+            """
+            import torch, math
+            # Ensure 2D: (B, obs_dim)
+            single = obs.dim() == 1
+            if single:
+                obs = obs.unsqueeze(0)   # (1, obs_dim)
+            B = obs.shape[0]
 
-            dispatch_out = self.dispatch_head(h).view(-1, self.n_hubs, 2)
-            dispatch_mean = dispatch_out[..., 0].squeeze(0)
-            dispatch_log_std = dispatch_out[..., 1].squeeze(0).clamp(
+            h = self.shared(obs)   # (B, hidden_dim)
+
+            # Dispatch: (B, n_hubs*2) -> (B, n_hubs, 2)
+            dispatch_out = self.dispatch_head(h).view(B, self.n_hubs, 2)
+            dispatch_mean    = dispatch_out[:, :, 0]   # (B, n_hubs)
+            dispatch_log_std = dispatch_out[:, :, 1].clamp(
                 self.log_std_min, self.log_std_max
             )
 
-            price_out = self.price_head(h).squeeze(0)
-            price_mean = price_out[0]
-            price_log_std = price_out[1].clamp(self.log_std_min, self.log_std_max)
+            # Price: (B, 2)
+            price_out    = self.price_head(h)           # (B, 2)
+            price_mean   = price_out[:, 0]              # (B,)
+            price_log_std = price_out[:, 1].clamp(self.log_std_min, self.log_std_max)
+
+            price_mid = self.price_max / 2
 
             if deterministic:
-                dispatch_kw = 100.0 * torch.tanh(dispatch_mean)  # signed kW
-                price = (self.price_max / 2) + (self.price_max / 2) * torch.tanh(price_mean)
-                return torch.cat([dispatch_kw, price.unsqueeze(0)]), torch.tensor(0.0)
+                dispatch_kw = 100.0 * torch.tanh(dispatch_mean)   # (B, n_hubs)
+                price = price_mid + price_mid * torch.tanh(price_mean)  # (B,)
+                action = torch.cat([dispatch_kw, price.unsqueeze(1)], dim=1)  # (B, H+1)
+                if single:
+                    action = action.squeeze(0)
+                return action, torch.tensor(0.0)
 
+            # Reparameterisation
             dispatch_eps = torch.randn_like(dispatch_mean)
             dispatch_pre = dispatch_mean + dispatch_log_std.exp() * dispatch_eps
-            tanh_d = torch.tanh(dispatch_pre)
-            dispatch_kw = 100.0 * tanh_d  # signed kW via tanh rescaling
+            tanh_d       = torch.tanh(dispatch_pre)
+            dispatch_kw  = 100.0 * tanh_d   # (B, n_hubs)
 
-            price_eps = torch.randn_like(price_mean)
-            price_pre = price_mean + price_log_std.exp() * price_eps
-            price_mid = self.price_max / 2
-            price = price_mid + price_mid * torch.tanh(price_pre)
+            price_eps  = torch.randn_like(price_mean)
+            price_pre  = price_mean + price_log_std.exp() * price_eps
+            tanh_p     = torch.tanh(price_pre)
+            price      = price_mid + price_mid * tanh_p   # (B,)
 
-            action = torch.cat([dispatch_kw, price.unsqueeze(0)])
+            action = torch.cat([dispatch_kw, price.unsqueeze(1)], dim=1)  # (B, H+1)
 
-            import math
+            # Log prob with tanh correction
             dispatch_log_prob = (
                 -0.5 * dispatch_eps ** 2 - dispatch_log_std
                 - 0.5 * math.log(2 * math.pi)
                 - torch.log(1 - tanh_d ** 2 + 1e-6)
                 - math.log(100.0)
-            ).sum()
+            ).sum(dim=-1)   # (B,)
 
-            tanh_price = torch.tanh(price_pre)
             price_log_prob = (
                 -0.5 * price_eps ** 2 - price_log_std
-                - 0.5 * np.log(2 * np.pi)
-                - torch.log(1 - tanh_price ** 2 + 1e-6)
-                - np.log(price_mid)
-            )
+                - 0.5 * math.log(2 * math.pi)
+                - torch.log(1 - tanh_p ** 2 + 1e-6)
+                - math.log(price_mid)
+            )   # (B,)
 
-            return action, dispatch_log_prob + price_log_prob
+            log_prob = dispatch_log_prob + price_log_prob   # (B,)
+
+            if single:
+                action   = action.squeeze(0)
+                log_prob = log_prob.squeeze(0)
+
+            return action, log_prob
 
     class FlatCritic(nn.Module):
         """Flat MLP critic. Input: concatenated obs + action."""
@@ -201,7 +224,7 @@ class SACFlatAgent:
         self.price_max = price_max
         self.name = "SAC-Flat"
 
-        from baselines.gnn_rl.replay_buffer import ReplayBuffer
+        from .replay_buffer import ReplayBuffer
         self.buffer = ReplayBuffer(
             obs_dim=obs_dim,
             action_dim=action_dim,
@@ -293,20 +316,8 @@ class SACFlatAgent:
         done_t = torch.tensor(batch.dones, dtype=torch.float32)
 
         with torch.no_grad():
-            next_act, next_log_prob = self.actor(next_t)
-            q1n = self.target_critic1(next_t, next_act.unsqueeze(0)
-                                       if next_act.dim() == 1 else next_act)
-            q2n = self.target_critic2(next_t, next_act.unsqueeze(0)
-                                       if next_act.dim() == 1 else next_act)
-            # Batch forward
-            next_actions_list, next_lp_list = [], []
-            for i in range(len(obs_t)):
-                a, lp = self.actor(next_t[i:i+1])
-                next_actions_list.append(a)
-                next_lp_list.append(lp)
-            next_actions = torch.stack(next_actions_list).squeeze(1)
-            next_lps = torch.stack(next_lp_list)
-
+            # Batched forward pass — actor now handles (B, obs_dim) directly
+            next_actions, next_lps = self.actor(next_t, deterministic=False)
             q1n = self.target_critic1(next_t, next_actions)
             q2n = self.target_critic2(next_t, next_actions)
             y = rew_t + self.gamma * (1 - done_t) * (
@@ -326,13 +337,8 @@ class SACFlatAgent:
         torch.nn.utils.clip_grad_norm_(self.critic2.parameters(), 1.0)
         self.critic2_opt.step()
 
-        actions_list, lp_list = [], []
-        for i in range(len(obs_t)):
-            a, lp = self.actor(obs_t[i:i+1])
-            actions_list.append(a)
-            lp_list.append(lp)
-        new_actions = torch.stack(actions_list).squeeze(1)
-        log_probs = torch.stack(lp_list)
+        # Batched actor forward
+        new_actions, log_probs = self.actor(obs_t, deterministic=False)
 
         q1p = self.critic1(obs_t, new_actions)
         q2p = self.critic2(obs_t, new_actions)
@@ -361,7 +367,7 @@ class SACFlatAgent:
             "critic_loss": float((c1_loss + c2_loss) / 2),
             "actor_loss": float(actor_loss),
             "alpha_loss": float(alpha_loss),
-            "alpha": float(self.log_alpha.detach().exp()),
+            "alpha": float(self.log_alpha.exp()),
         }
 
     def save(self, path: str):
