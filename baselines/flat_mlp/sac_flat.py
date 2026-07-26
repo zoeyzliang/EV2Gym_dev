@@ -283,9 +283,10 @@ class SACFlatAgent:
 
         import torch
         with torch.no_grad():
-            obs_t = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
+            # Pass 1D obs directly — actor.forward() handles unsqueeze internally
+            obs_t = torch.tensor(obs, dtype=torch.float32)   # (obs_dim,)
             action, _ = self.actor(obs_t, deterministic=deterministic)
-        action = action.numpy()
+        action = action.numpy()   # (action_dim,) — single obs returns 1D
         action[-1] = np.clip(action[-1], 0.0, self.price_max)
         return action.astype(np.float32)
 
