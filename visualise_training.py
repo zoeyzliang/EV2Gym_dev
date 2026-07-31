@@ -271,10 +271,19 @@ def compute_timing(data: dict) -> dict:
     all_min = [d['min_per_ep'] for d in durations_sec]
     eps_hr  = 60 / avg_min if avg_min > 0 else 0
 
-    # Use reported training_minutes if available (more accurate)
-    total_elapsed_min = data.get('training_minutes') or (
-        (secs[-1] - (parse_time(data['train_start_time']) if data['train_start_time'] else secs[0])) / 60
-    )
+    # Compute total elapsed from episode count x avg time per episode.
+    # Raw HH:MM:SS timestamps only roll over once per midnight (+86400s),
+    # so a 48h job spanning 2 midnights shows ~24h from raw timestamps.
+    # Using avg_min x n_episodes is accurate regardless of job duration.
+    n_eps_completed = last_ep - (train[0]['episode'] - 1)
+    total_elapsed_min_from_eps = avg_min * n_eps_completed
+
+    # Cross-check against reported wall time if available
+    reported = data.get('training_minutes')
+    if reported and reported > total_elapsed_min_from_eps * 0.5:
+        total_elapsed_min = reported
+    else:
+        total_elapsed_min = total_elapsed_min_from_eps
 
     return {
         'durations':               durations_sec,
