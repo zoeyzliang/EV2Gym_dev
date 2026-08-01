@@ -266,9 +266,11 @@ def make_env(cfg: dict, split: str = "train", seed: int = 42) -> NEMDOEEnv:
 FIXED_EVAL_DAYS = [
     "2024-01-25",   # summer peak — heatwave, tight DOE, afternoon spike
     "2024-03-12",   # high volatility — large intraday RRP swings
-    "2024-10-03",   # negative RRP — wind surplus, charge direction test
+    "2024-02-13",   # negative RRP — 131 negative intervals, min=-$1000/MWh
+                    # (2024-10-03 was missing from VIC1 parquet — data gap)
     "2024-06-15",   # winter average — moderate stable prices, baseline
-    "2024-08-20",   # weekend low demand — thin participation pool
+    "2024-01-28",   # weekend low demand — Sunday, 106 neg RRP intervals
+                    # (2024-08-20 was missing from VIC1 parquet — data gap)
 ]
 
 
