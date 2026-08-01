@@ -126,7 +126,7 @@ DEFAULT_CONFIG = {
     "eval_every": 50,
     "n_eval_episodes": 5,             # avg over 5 price days per eval checkpoint
     "convergence_window": 10,   # episodes to check for plateau
-    "convergence_threshold": 500, # max std across window to declare convergence                 # evaluate every N episodes
+    "convergence_threshold": 500,  # max $std of eval profit over window to declare convergence                 # evaluate every N episodes
     "save_every": 100,                # checkpoint every N episodes
 
 
@@ -545,32 +545,59 @@ def train(cfg: dict, resume_path: str = None, no_eval: bool = False, start_episo
 
         # ── Convergence detection ─────────────────────────────────────
         # Track when agent reaches 90% of asymptotic reward (RQ4 metric)
-        if (convergence_episode is None
-                and len(reward_history) >= cfg["convergence_window"]):
-            recent = np.mean(reward_history[-cfg["convergence_window"]:])
-            all_time_best = max(reward_history)
-            if all_time_best > 0 and recent >= cfg["convergence_threshold"] * all_time_best:
+        # ── Convergence detection (eval-profit std based) ────────────
+        if convergence_episode is None and len(eval_log) >= cfg["convergence_window"]:
+            recent_profits = [e["mean_net_profit"] for e in eval_log[-cfg["convergence_window"]:]]
+            profit_std         = float(np.std(recent_profits))
+            profit_improvement = abs(recent_profits[-1] - recent_profits[0])
+            profit_mean        = float(np.mean(recent_profits))
+            threshold          = cfg["convergence_threshold"]
+
+            if profit_std < threshold and profit_improvement < threshold:
                 convergence_episode = episode
                 logger.info(
-                    f"Convergence detected at episode {episode} "
-                    f"(reward={recent:.1f}, threshold={cfg['convergence_threshold']*all_time_best:.1f})"
+                    f"  → CONVERGED at episode {episode} | "
+                    f"mean_profit=${profit_mean:.0f} | "
+                    f"std=${profit_std:.0f} | "
+                    f"improvement=${profit_improvement:.0f} "
+                    f"(threshold=${threshold:.0f})"
+                )
+            else:
+                status = "converging" if profit_std < threshold * 2 else "not yet"
+                logger.info(
+                    f"  → Convergence check: std=${profit_std:.0f} | "
+                    f"improvement=${profit_improvement:.0f} | "
+                    f"threshold=${threshold:.0f} ({status})"
                 )
 
         # ── Periodic logging ──────────────────────────────────────────
         if episode % 10 == 0:
             recent_reward = np.mean(reward_history[-10:])
-            logger.info(
-                f"Ep {episode:4d}/{n_episodes} | "
-                f"reward={ep_reward:8.1f} | "
-                f"avg10={recent_reward:8.1f} | "
-                f"ρ={mean_rho:.3f} | "
-                f"doe_viol={total_doe_violation_kw:.1f}kW | "
-                f"buf={agent.buffer.size:6d} | "
-                f"α={log_entry['alpha']:.4f}" if log_entry['alpha'] else
-                f"Ep {episode:4d}/{n_episodes} | "
-                f"reward={ep_reward:8.1f} | "
-                f"buf={agent.buffer.size:6d} | collecting..."
-            )
+            critic_loss = log_entry.get('critic_loss')
+            actor_loss  = log_entry.get('actor_loss')
+            if log_entry.get('alpha') is not None:
+                logger.info(
+                    f"Ep {episode:4d}/{n_episodes} | "
+                    f"reward={ep_reward:8.1f} | "
+                    f"avg10={recent_reward:8.1f} | "
+                    f"ρ={mean_rho:.3f} | "
+                    f"doe_viol={total_doe_violation_kw:.1f}kW | "
+                    f"buf={agent.buffer.size:6d} | "
+                    f"α={log_entry['alpha']:.4f} | "
+                    f"critic_loss={critic_loss:.4f}" if critic_loss else
+                    f"Ep {episode:4d}/{n_episodes} | "
+                    f"reward={ep_reward:8.1f} | "
+                    f"avg10={recent_reward:8.1f} | "
+                    f"ρ={mean_rho:.3f} | "
+                    f"buf={agent.buffer.size:6d} | "
+                    f"α={log_entry['alpha']:.4f}"
+                )
+            else:
+                logger.info(
+                    f"Ep {episode:4d}/{n_episodes} | "
+                    f"reward={ep_reward:8.1f} | "
+                    f"buf={agent.buffer.size:6d} | collecting..."
+                )
 
         # ── Evaluation ────────────────────────────────────────────────
         if not no_eval and eval_env is not None and episode % cfg["eval_every"] == 0:
