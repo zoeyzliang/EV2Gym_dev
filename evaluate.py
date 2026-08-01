@@ -38,23 +38,29 @@ Case studies (Terrence's requirement)
 Each case study is run n_runs times (stochastic participation) and
 mean ± std is reported — this is what goes in Table 3.
 
-    Case Study 1 — Summer peak (Jan 2024 heatwave)
+Dates match FIXED_EVAL_DAYS in train_sac_gnn.py exactly, so checkpoint
+selection during training and final Table 3 results are on identical
+conditions. Two original dates (2024-10-03, 2024-08-20) were replaced
+after discovering the VIC1 2024 parquet has a data gap from August
+onward — see date comments below for the confirmed replacement dates.
+
+    Case Study 1 — Summer peak (2024-01-25, Jan heatwave)
         Tests: tight DOE constraint + afternoon RRP spike
         Expected winner: SAC-GNN (learns spatial DOE correlation)
 
-    Case Study 2 — High volatility (Mar 2024)
+    Case Study 2 — High volatility (2024-03-12)
         Tests: precise arbitrage timing under large intraday swings
         Expected winner: SAC-GNN (learns spike timing vs greedy)
 
-    Case Study 3 — Negative RRP (Oct 2024)
+    Case Study 3 — Negative RRP (2024-02-13, market floor -$1000/MWh)
         Tests: charge direction of arbitrage (get paid to consume)
         Expected winner: SAC-GNN (learned bidirectional dispatch)
 
-    Case Study 4 — Winter average (Jun 2024)
+    Case Study 4 — Winter average (2024-06-15)
         Tests: baseline stable-price performance
         Expected: all agents competitive
 
-    Case Study 5 — Weekend low demand (Aug 2024)
+    Case Study 5 — Weekend low demand (2024-01-28, mean RRP ~$0.4/MWh)
         Tests: incentive price adaptation under thin participation
         Expected winner: SAC-GNN (learns ρ elasticity)
 
@@ -119,8 +125,10 @@ CASE_STUDIES = [
     {
         "id":          "cs3_negative_rrp",
         "name":        "Negative RRP",
-        "date":        "2024-10-03",
-        "description": "Wind surplus pushes RRP negative — charge direction test",
+        "date":        "2024-02-13",
+        "description": "Extreme negative RRP — 25 intervals at market floor "
+                        "(-$1,000/MWh). Original 2024-10-03 missing from VIC1 "
+                        "parquet (AEMO data gap), replaced with confirmed date.",
         "tests":       "Bidirectional dispatch",
     },
     {
@@ -133,8 +141,11 @@ CASE_STUDIES = [
     {
         "id":          "cs5_weekend_low",
         "name":        "Weekend Low Demand",
-        "date":        "2024-08-20",
-        "description": "Low demand weekend — thin participation pool",
+        "date":        "2024-01-28",
+        "description": "Sunday with mean RRP ~$0.4/MWh — near-zero average price, "
+                        "thin participation pool. Original 2024-08-20 missing "
+                        "from VIC1 parquet (AEMO data gap), replaced with "
+                        "confirmed date.",
         "tests":       "Incentive price adaptation",
     },
 ]
