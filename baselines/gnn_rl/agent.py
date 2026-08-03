@@ -132,6 +132,7 @@ class SACGNNAgent:
         learning_starts: int = 5000,
         update_every: int = 1,
         seed: Optional[int] = None,
+        device: Optional[str] = None,
     ):
         self.n_hubs = n_hubs
         self.graph_data = graph_data
@@ -170,9 +171,28 @@ class SACGNNAgent:
         import os
         force_numpy = os.environ.get("FORCE_NUMPY_AGENT", "0") == "1"
         self._use_torch = (not force_numpy) and _try_import_torch()
+
+        # Device selection: explicit device arg > CUDA if available > CPU.
+        # Without this, all tensors/models default to CPU even when a GPU
+        # is allocated by SLURM (--gres=gpu:1) — the GPU sits idle at 0%
+        # utilisation while training runs on CPU. This was flagged by M3
+        # admins as wasted allocation and fixed here.
+        if self._use_torch:
+            import torch
+            if device is not None:
+                self.device = torch.device(device)
+            else:
+                self.device = torch.device(
+                    "cuda" if torch.cuda.is_available() else "cpu"
+                )
+        else:
+            self.device = None
+
         if self._use_torch:
             self._init_torch_networks(lr_actor, lr_critic, lr_alpha)
-            logger.info("SACGNNAgent: using PyTorch + GAT networks")
+            logger.info(
+                f"SACGNNAgent: using PyTorch + GAT networks on device={self.device}"
+            )
         else:
             self._init_numpy_networks()
             logger.info(
@@ -209,16 +229,16 @@ class SACGNNAgent:
         import torch.optim as optim
 
         actor, critic1, critic2 = build_torch_networks(self.net_cfg, self.n_hubs)
-        self.actor = actor
-        self.critic1 = critic1
-        self.critic2 = critic2
+        self.actor = actor.to(self.device)
+        self.critic1 = critic1.to(self.device)
+        self.critic2 = critic2.to(self.device)
 
         # Target critics (soft-updated, not directly trained)
         _, target_critic1, target_critic2 = build_torch_networks(
             self.net_cfg, self.n_hubs
         )
-        self.target_critic1 = target_critic1
-        self.target_critic2 = target_critic2
+        self.target_critic1 = target_critic1.to(self.device)
+        self.target_critic2 = target_critic2.to(self.device)
 
         # Initialise target networks with same weights as online critics
         self._hard_update(self.target_critic1, self.critic1)
@@ -232,7 +252,7 @@ class SACGNNAgent:
 
         # Entropy temperature α (learnable, log-parameterised for stability)
         self.log_alpha = torch.tensor(
-            np.log(1.0), dtype=torch.float32, requires_grad=True
+            np.log(1.0), dtype=torch.float32, requires_grad=True, device=self.device
         )
 
         # Optimisers
@@ -243,10 +263,10 @@ class SACGNNAgent:
 
         # Convert static graph to tensors (stored once, reused every step)
         self._edge_index_t = torch.tensor(
-            self.graph_data.edge_index, dtype=torch.long
+            self.graph_data.edge_index, dtype=torch.long, device=self.device
         )
         self._edge_attr_t = torch.tensor(
-            self.graph_data.edge_attr, dtype=torch.float32
+            self.graph_data.edge_attr, dtype=torch.float32, device=self.device
         )
 
     def _init_numpy_networks(self):
@@ -291,12 +311,14 @@ class SACGNNAgent:
         if self._use_torch:
             import torch
             with torch.no_grad():
-                node_t = torch.tensor(node_feats, dtype=torch.float32)
+                node_t = torch.tensor(
+                    node_feats, dtype=torch.float32, device=self.device
+                )
                 action, _ = self.actor(
                     node_t, self._edge_index_t,
                     deterministic=deterministic,
                 )
-            action = action.numpy()
+            action = action.cpu().numpy()
         else:
             # Numpy fallback: always deterministic (no reparameterisation)
             action = self.actor.forward(node_feats, self._edge_index_t)
@@ -384,12 +406,12 @@ class SACGNNAgent:
         # locking the policy into a deterministic strategy too early.
         alpha = self.log_alpha.exp().detach().clamp(min=0.01)
 
-        # --- Convert batch to tensors ---
-        obs_t      = torch.tensor(batch.obs,      dtype=torch.float32)
-        act_t      = torch.tensor(batch.actions,  dtype=torch.float32)
-        rew_t      = torch.tensor(batch.rewards,  dtype=torch.float32)
-        next_obs_t = torch.tensor(batch.next_obs, dtype=torch.float32)
-        done_t     = torch.tensor(batch.dones,    dtype=torch.float32)
+        # --- Convert batch to tensors (moved to self.device — GPU if available) ---
+        obs_t      = torch.tensor(batch.obs,      dtype=torch.float32, device=self.device)
+        act_t      = torch.tensor(batch.actions,  dtype=torch.float32, device=self.device)
+        rew_t      = torch.tensor(batch.rewards,  dtype=torch.float32, device=self.device)
+        next_obs_t = torch.tensor(batch.next_obs, dtype=torch.float32, device=self.device)
+        done_t     = torch.tensor(batch.dones,    dtype=torch.float32, device=self.device)
 
         # --- Step 1: Critic update ---
         with torch.no_grad():
@@ -501,7 +523,7 @@ class SACGNNAgent:
 
         caps = torch.full(
             (self.n_hubs,), self.net_cfg.equipment_cap_kw,
-            dtype=h.dtype, device=h.device
+            dtype=h.dtype, device=self.device
         )
         price_mid = (self.net_cfg.price_max + self.net_cfg.price_min) / 2
         price_range = (self.net_cfg.price_max - self.net_cfg.price_min) / 2
@@ -670,21 +692,32 @@ class SACGNNAgent:
         logger.info(f"Agent saved to {path}")
 
     def load(self, path: str) -> None:
-        """Load network weights from a checkpoint."""
+        """
+        Load network weights from a checkpoint.
+
+        Checkpoints are portable across devices: a model trained on GPU
+        can be loaded on a CPU-only machine (e.g. for local evaluation)
+        and vice versa. map_location=self.device handles this — weights
+        are always placed on whatever device this agent instance is using,
+        regardless of which device they were saved from.
+        """
         if not self._use_torch:
             logger.warning("Cannot load into numpy fallback agent")
             return
         import torch
-        ckpt = torch.load(path, map_location="cpu")
+        ckpt = torch.load(path, map_location=self.device)
         self.actor.load_state_dict(ckpt["actor"])
         self.critic1.load_state_dict(ckpt["critic1"])
         self.critic2.load_state_dict(ckpt["critic2"])
         self.target_critic1.load_state_dict(ckpt["target_critic1"])
         self.target_critic2.load_state_dict(ckpt["target_critic2"])
-        self.log_alpha = ckpt["log_alpha"]
+        self.log_alpha = ckpt["log_alpha"].to(self.device).requires_grad_(True)
         self._total_steps = ckpt["total_steps"]
         self._total_updates = ckpt["total_updates"]
-        logger.info(f"Agent loaded from {path} (step {self._total_steps})")
+        logger.info(
+            f"Agent loaded from {path} onto device={self.device} "
+            f"(step {self._total_steps})"
+        )
 
     # ------------------------------------------------------------------
     # Diagnostics
@@ -703,4 +736,5 @@ class SACGNNAgent:
             "action_dim": self.action_dim,
             "target_entropy": self.target_entropy,
             "reward_running_std": round(self._reward_running_std, 2),
+            "device": str(self.device) if self.device is not None else "n/a",
         }

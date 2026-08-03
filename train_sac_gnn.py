@@ -414,6 +414,14 @@ def train(cfg: dict, resume_path: str = None, no_eval: bool = False, start_episo
 
     agent_type = cfg.get("agent", "sac_gnn")
     n_hubs     = len(hub_configs)
+
+    # device=None lets each agent self-detect CUDA vs CPU (agent.py picks
+    # "cuda" if torch.cuda.is_available() else "cpu"). Passed explicitly
+    # here (rather than relying purely on each agent's internal default)
+    # so the choice is visible in one place and can be overridden via
+    # cfg["device"] if ever needed (e.g. forcing CPU for a debug run).
+    device = cfg.get("device", None)
+
     agent_kwargs = dict(
         n_hubs=n_hubs,
         graph_data=graph,
@@ -429,6 +437,7 @@ def train(cfg: dict, resume_path: str = None, no_eval: bool = False, start_episo
         learning_starts=cfg["learning_starts"],
         update_every=cfg["update_every"],
         seed=cfg["seed"],
+        device=device,
     )
 
     if agent_type == "sac_gcn":
@@ -450,11 +459,14 @@ def train(cfg: dict, resume_path: str = None, no_eval: bool = False, start_episo
             learning_starts=cfg["learning_starts"],
             update_every=cfg["update_every"],
             seed=cfg["seed"],
+            device=device,
         )
         logger.info("Architecture: SAC-Flat (MLP only — no graph encoder)")
     else:
         agent = SACGNNAgent(**agent_kwargs)
         logger.info("Architecture: SAC-GNN (GAT encoder — learned attention)")
+
+    logger.info(f"Agent device: {agent.device}")
 
     if resume_path:
         logger.info(f"Resuming from checkpoint: {resume_path}")

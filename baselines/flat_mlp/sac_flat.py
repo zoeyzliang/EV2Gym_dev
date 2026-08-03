@@ -212,6 +212,7 @@ class SACFlatAgent:
         update_every: int = 1,
         price_max: float = 0.50,    # $/kWh
         seed: Optional[int] = None,
+        device: Optional[str] = None,
     ):
         self.obs_dim = obs_dim
         self.action_dim = action_dim
@@ -239,8 +240,23 @@ class SACFlatAgent:
         self._total_steps = 0
         self._total_updates = 0
 
+        # Device selection: explicit device arg > CUDA if available > CPU.
+        # Same fix as SACGNNAgent — without this every tensor defaults to
+        # CPU even with a GPU allocated, wasting the SLURM GPU allocation.
+        if self._use_torch:
+            import torch
+            if device is not None:
+                self.device = torch.device(device)
+            else:
+                self.device = torch.device(
+                    "cuda" if torch.cuda.is_available() else "cpu"
+                )
+        else:
+            self.device = None
+
         if self._use_torch:
             self._init_torch(lr_actor, lr_critic, lr_alpha, hidden_dim, price_max)
+            logger.info(f"SACFlatAgent: using PyTorch on device={self.device}")
         else:
             logger.info("SACFlatAgent: numpy fallback (no training)")
 
@@ -248,12 +264,18 @@ class SACFlatAgent:
         import torch
         import torch.optim as optim
 
-        self.actor, self.critic1, self.critic2 = build_flat_networks(
+        actor, critic1, critic2 = build_flat_networks(
             self.obs_dim, self.action_dim, hidden_dim, price_max
         )
-        _, self.target_critic1, self.target_critic2 = build_flat_networks(
+        self.actor = actor.to(self.device)
+        self.critic1 = critic1.to(self.device)
+        self.critic2 = critic2.to(self.device)
+
+        _, target_critic1, target_critic2 = build_flat_networks(
             self.obs_dim, self.action_dim, hidden_dim, price_max
         )
+        self.target_critic1 = target_critic1.to(self.device)
+        self.target_critic2 = target_critic2.to(self.device)
 
         # Hard init targets
         for t, o in zip(self.target_critic1.parameters(),
@@ -267,8 +289,10 @@ class SACFlatAgent:
         for p in self.target_critic2.parameters():
             p.requires_grad = False
 
-        self.log_alpha = torch.tensor(np.log(1.0), dtype=torch.float32,
-                                       requires_grad=True)
+        self.log_alpha = torch.tensor(
+            np.log(1.0), dtype=torch.float32,
+            requires_grad=True, device=self.device
+        )
         self.target_entropy = -float(self.action_dim) * 0.5  # = -11
 
         self.actor_opt = optim.Adam(self.actor.parameters(), lr=lr_actor)
@@ -284,9 +308,11 @@ class SACFlatAgent:
         import torch
         with torch.no_grad():
             # Pass 1D obs directly — actor.forward() handles unsqueeze internally
-            obs_t = torch.tensor(obs, dtype=torch.float32)   # (obs_dim,)
+            obs_t = torch.tensor(
+                obs, dtype=torch.float32, device=self.device
+            )   # (obs_dim,)
             action, _ = self.actor(obs_t, deterministic=deterministic)
-        action = action.numpy()   # (action_dim,) — single obs returns 1D
+        action = action.cpu().numpy()   # (action_dim,) — single obs returns 1D
         action[-1] = np.clip(action[-1], 0.0, self.price_max)
         return action.astype(np.float32)
 
@@ -310,11 +336,11 @@ class SACFlatAgent:
         batch = self.buffer.sample(self.batch_size)
         alpha = self.log_alpha.exp().detach().clamp(min=0.01)
 
-        obs_t = torch.tensor(batch.obs, dtype=torch.float32)
-        act_t = torch.tensor(batch.actions, dtype=torch.float32)
-        rew_t = torch.tensor(batch.rewards, dtype=torch.float32)
-        next_t = torch.tensor(batch.next_obs, dtype=torch.float32)
-        done_t = torch.tensor(batch.dones, dtype=torch.float32)
+        obs_t  = torch.tensor(batch.obs,      dtype=torch.float32, device=self.device)
+        act_t  = torch.tensor(batch.actions,  dtype=torch.float32, device=self.device)
+        rew_t  = torch.tensor(batch.rewards,  dtype=torch.float32, device=self.device)
+        next_t = torch.tensor(batch.next_obs, dtype=torch.float32, device=self.device)
+        done_t = torch.tensor(batch.dones,    dtype=torch.float32, device=self.device)
 
         with torch.no_grad():
             # Batched forward pass — actor now handles (B, obs_dim) directly
@@ -368,11 +394,19 @@ class SACFlatAgent:
             "critic_loss": float((c1_loss + c2_loss) / 2),
             "actor_loss": float(actor_loss),
             "alpha_loss": float(alpha_loss),
-            "alpha": float(self.log_alpha.exp()),
+            "alpha": float(self.log_alpha.detach().exp()),
         }
 
     def save(self, path: str):
+        """
+        Save all network weights and training state to disk.
+        Includes target critics and total_updates for full parity with
+        SACGNNAgent.save() — needed so a resumed SAC-Flat run has correctly
+        initialised target networks rather than re-copying from the online
+        critics (which would discard the soft-update history).
+        """
         if not self._use_torch:
+            logger.warning("Cannot save numpy fallback agent (no weights to save)")
             return
         import torch
         from pathlib import Path
@@ -381,14 +415,49 @@ class SACFlatAgent:
             "actor": self.actor.state_dict(),
             "critic1": self.critic1.state_dict(),
             "critic2": self.critic2.state_dict(),
+            "target_critic1": self.target_critic1.state_dict(),
+            "target_critic2": self.target_critic2.state_dict(),
             "log_alpha": self.log_alpha,
             "total_steps": self._total_steps,
+            "total_updates": self._total_updates,
         }, path)
+        logger.info(f"Agent saved to {path}")
+
+    def load(self, path: str) -> None:
+        """
+        Load network weights from a checkpoint.
+
+        This method was previously missing entirely — evaluate.py calls
+        agent.load(checkpoint) on every agent type including SAC-Flat, so
+        without this, evaluating a trained SAC-Flat checkpoint would crash
+        with AttributeError. map_location=self.device makes checkpoints
+        portable across devices (e.g. train on GPU, evaluate on CPU laptop).
+        """
+        if not self._use_torch:
+            logger.warning("Cannot load into numpy fallback agent")
+            return
+        import torch
+        ckpt = torch.load(path, map_location=self.device)
+        self.actor.load_state_dict(ckpt["actor"])
+        self.critic1.load_state_dict(ckpt["critic1"])
+        self.critic2.load_state_dict(ckpt["critic2"])
+        if "target_critic1" in ckpt:
+            self.target_critic1.load_state_dict(ckpt["target_critic1"])
+            self.target_critic2.load_state_dict(ckpt["target_critic2"])
+        self.log_alpha = ckpt["log_alpha"].to(self.device).requires_grad_(True)
+        self._total_steps = ckpt["total_steps"]
+        self._total_updates = ckpt.get("total_updates", 0)
+        logger.info(
+            f"Agent loaded from {path} onto device={self.device} "
+            f"(step {self._total_steps})"
+        )
 
     def summary(self) -> dict:
         return {
             "name": self.name,
             "total_steps": self._total_steps,
+            "total_updates": self._total_updates,
             "buffer_size": self.buffer.size,
             "using_torch": self._use_torch,
+            "device": str(self.device) if self.device is not None else "n/a",
         }

@@ -107,20 +107,27 @@ class SACGCNAgent(SACGNNAgent):
         self.name = "SAC-GCN"
 
     def _init_torch_networks(self, lr_actor, lr_critic, lr_alpha):
-        """Override: use GCN encoder instead of GAT."""
+        """
+        Override: use GCN encoder instead of GAT.
+
+        self.device is already set by SACGNNAgent.__init__() before this
+        method runs (CUDA if available, else CPU) — every network and
+        tensor here is moved to that device so GCN training also uses
+        the allocated GPU instead of silently running on CPU.
+        """
         import torch
         import torch.optim as optim
 
         actor, critic1, critic2 = build_gcn_networks(self.net_cfg, self.n_hubs)
-        self.actor = actor
-        self.critic1 = critic1
-        self.critic2 = critic2
+        self.actor = actor.to(self.device)
+        self.critic1 = critic1.to(self.device)
+        self.critic2 = critic2.to(self.device)
 
         _, target_critic1, target_critic2 = build_gcn_networks(
             self.net_cfg, self.n_hubs
         )
-        self.target_critic1 = target_critic1
-        self.target_critic2 = target_critic2
+        self.target_critic1 = target_critic1.to(self.device)
+        self.target_critic2 = target_critic2.to(self.device)
 
         self._hard_update(self.target_critic1, self.critic1)
         self._hard_update(self.target_critic2, self.critic2)
@@ -130,8 +137,11 @@ class SACGCNAgent(SACGNNAgent):
         for p in self.target_critic2.parameters():
             p.requires_grad = False
 
+        # Note: log_alpha init matches parent class convention (log(1.0),
+        # not log(0.1)) — see agent.py target_entropy comment for rationale
+        # on why an aggressive low starting alpha causes premature collapse.
         self.log_alpha = torch.tensor(
-            np.log(0.1), dtype=torch.float32, requires_grad=True
+            np.log(1.0), dtype=torch.float32, requires_grad=True, device=self.device
         )
         self.actor_opt = torch.optim.Adam(
             self.actor.parameters(), lr=lr_actor
@@ -145,10 +155,13 @@ class SACGCNAgent(SACGNNAgent):
         self.alpha_opt = torch.optim.Adam([self.log_alpha], lr=lr_alpha)
 
         self._edge_index_t = torch.tensor(
-            self.graph_data.edge_index, dtype=torch.long
+            self.graph_data.edge_index, dtype=torch.long, device=self.device
         )
         self._edge_attr_t = torch.tensor(
-            self.graph_data.edge_attr, dtype=torch.float32
+            self.graph_data.edge_attr, dtype=torch.float32, device=self.device
         )
 
-        logger.info("SACGCNAgent: GCN encoder initialised (ablation baseline)")
+        logger.info(
+            f"SACGCNAgent: GCN encoder initialised on device={self.device} "
+            f"(ablation baseline)"
+        )
