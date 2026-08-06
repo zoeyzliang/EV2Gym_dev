@@ -334,7 +334,9 @@ class SACFlatAgent:
         import torch.nn.functional as F
 
         batch = self.buffer.sample(self.batch_size)
-        alpha = self.log_alpha.exp().detach().clamp(min=0.01)
+        # Alpha floor raised from 0.01 to 0.05 — see agent.py store_transition
+        # docstring for rationale (more recovery capacity after bad updates)
+        alpha = self.log_alpha.exp().detach().clamp(min=0.05)
 
         obs_t  = torch.tensor(batch.obs,      dtype=torch.float32, device=self.device)
         act_t  = torch.tensor(batch.actions,  dtype=torch.float32, device=self.device)

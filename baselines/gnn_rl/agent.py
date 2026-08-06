@@ -338,6 +338,24 @@ class SACGNNAgent:
         Reward is normalised by a running std before storage so the critic
         sees targets in a stable range regardless of episode phase.
         The raw reward is logged externally (train_sac_gnn.py) for reporting.
+
+        Reward clipping (added after observing training collapses)
+        --------------------------------------------------------
+        The EMA running std adapts slowly (alpha=0.01), so a sudden
+        catastrophic transition (e.g. a Tier 3/4 volatile price day
+        producing a -$2.9M reward from a large DOE violation penalty)
+        produces a huge normalised reward *before* the running std has
+        caught up. That single outlier transition then dominates the
+        next several gradient updates, destabilising the policy — this
+        is what caused the sharp collapses seen after episode ~600-750
+        in the seed1/seed2 real-price runs (e.g. SAC-GCN seed2:
+        +$25,782 at ep550 -> -$272,251 at ep750).
+
+        Clipping to [-10, 10] after normalisation caps how much any
+        single transition can move the gradient, regardless of how far
+        behind the running std estimate is. The buffer still records
+        that a bad transition occurred (direction preserved), but its
+        magnitude can no longer catastrophically dominate a batch.
         """
         # Update running statistics (EMA)
         self._reward_running_mean = (
@@ -350,6 +368,7 @@ class SACGNNAgent:
             + self._reward_norm_alpha * diff
         )
         normalised_reward = reward / self._reward_running_std
+        normalised_reward = float(np.clip(normalised_reward, -10.0, 10.0))
         self.buffer.add(obs, action, normalised_reward, next_obs, done)
         self._total_steps += 1
 
@@ -401,10 +420,12 @@ class SACGNNAgent:
         import torch
         import torch.nn.functional as F
 
-        # Alpha floor: prevent entropy collapse below 0.01
-        # Without this, alpha reaches ~0.0001 by episode 30 and stays there,
-        # locking the policy into a deterministic strategy too early.
-        alpha = self.log_alpha.exp().detach().clamp(min=0.01)
+        # Alpha floor: prevent entropy collapse below 0.05 (raised from 0.01
+        # after observing policy collapses that didn't recover — a higher
+        # floor gives the policy more room to keep exploring and escape a
+        # poor region of action space after a bad update, rather than being
+        # nearly deterministic with almost no ability to recover).
+        alpha = self.log_alpha.exp().detach().clamp(min=0.05)
 
         # --- Convert batch to tensors (moved to self.device — GPU if available) ---
         obs_t      = torch.tensor(batch.obs,      dtype=torch.float32, device=self.device)

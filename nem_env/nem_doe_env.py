@@ -138,6 +138,19 @@ class EnvConfig:
 
     # Reward
     lambda_conformance: float = 200.0     # per kW DOE violation (master summary §4)
+    max_conformance_penalty: float = 5000.0  # hard cap on p_conformance per step
+    # Without this cap, a single extreme-volatility day (e.g. a Tier 4
+    # curriculum day) can produce raw actor outputs wildly outside the
+    # DOE envelope, generating a p_conformance in the hundreds of
+    # thousands or millions in one 5-min step. Even after reward
+    # normalisation, an outlier this large can dominate several
+    # subsequent gradient updates and destabilise the policy — this is
+    # what caused the sharp post-peak collapses seen in the seed1/seed2
+    # real-price runs (e.g. SAC-GCN seed2: +$25,782 at ep550 crashing
+    # to -$272,251 at ep750, driven by doe_viol spiking to 1543kW).
+    # 5000 is still a strong deterrent (25x the per-kW penalty rate
+    # already makes any violation costly) while preventing a single
+    # step from producing an unrecoverable reward shock.
 
     # Incentive price action space ($/kWh)
     price_min: float = 0.0
@@ -494,11 +507,14 @@ class NEMDOEEnv(gym.Env):
 
         r_t = Σ_i [RRP_t × net_dispatched_kWh_{i,t} / 1000]   (MWh basis)
               − Σ_i [incentive_price_t × |participated_kWh_{i,t}|]
-              − λ_conf × Σ_i [max(0, |dispatch_{i,t}| − DOE_{i,t})]
+              − min(λ_conf × Σ_i [max(0, |dispatch_{i,t}| − DOE_{i,t})], cap)
 
         RRP in $/MWh, participated_kwh in kWh → convert to MWh for revenue.
         incentive_price in $/kWh, applied to absolute kWh delivered.
-        DOE violation penalty on raw kW excess (before clipping).
+        DOE violation penalty on raw kW excess (before clipping), capped
+        at EnvConfig.max_conformance_penalty to prevent single-step
+        reward shocks from destabilising training on extreme-volatility
+        days (see EnvConfig.max_conformance_penalty docstring).
 
         Returns
         -------
@@ -518,10 +534,13 @@ class NEMDOEEnv(gym.Env):
         # Only applies to energy actually delivered, regardless of direction
         r_incentive = float(incentive_price * np.abs(participated_kwh).sum())
 
-        # Term 3: DOE violation penalty
+        # Term 3: DOE violation penalty, capped to prevent single-step
+        # reward shocks from extreme-volatility days destabilising training
+        # (see EnvConfig.max_conformance_penalty for rationale)
         p_conformance = float(
             self.cfg.lambda_conformance * doe_violations_kw.sum()
         )
+        p_conformance = min(p_conformance, self.cfg.max_conformance_penalty)
 
         reward = r_wholesale - r_incentive - p_conformance
 
