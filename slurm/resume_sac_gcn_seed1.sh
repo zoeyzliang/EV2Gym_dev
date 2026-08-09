@@ -23,10 +23,10 @@ git pull origin main
 
 # Edit to the checkpoint you want to resume from (best.pt or episode_N.pt).
 # --start_episode is inferred from the checkpoint filename if not given.
-CHECKPOINT=results/sac_gcn_real_seed1/checkpoints/best.pt
+CHECKPOINT=/scratch2/fr57/zlia0072/ev2gym_training/results/sac_gcn_real_seed1/checkpoints/best.pt
 
 python train_sac_gnn.py \
     --agent sac_gcn \
     --seed 1 \
     --resume "$CHECKPOINT" \
-    --results_dir results/sac_gcn_real_seed1
+    --results_dir /scratch2/fr57/zlia0072/ev2gym_training/results/sac_gcn_real_seed1

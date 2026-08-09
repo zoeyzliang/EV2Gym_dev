@@ -25,4 +25,4 @@ python train_sac_gnn.py \
     --agent sac_flat \
     --episodes 1500 \
     --seed 42 \
-    --results_dir results/sac_flat_real_seed42
+    --results_dir /scratch2/fr57/zlia0072/ev2gym_training/results/sac_flat_real_seed42

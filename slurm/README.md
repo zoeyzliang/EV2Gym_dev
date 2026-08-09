@@ -5,6 +5,16 @@ Monash M3, driven through `train_sac_gnn.py --agent {sac_gnn,sac_gcn,sac_flat}`.
 
 ## Fixes applied (this revision)
 
+**Path fix:** `--results_dir` (and `CHECKPOINT=` in resume scripts) used a
+relative `results/...` path, which after `cd $WORKDIR` resolves to
+`EV2Gym_dev/results/...` — NOT where any actual checkpoint has ever been
+written. Every real training run to date wrote to
+`/scratch2/fr57/zlia0072/ev2gym_training/results/...` (one level above the
+repo). All `--results_dir` and `CHECKPOINT=` values are now absolute paths
+pointing there.
+
+### Original fixes
+
 The first draft of these scripts was reconstructed from `logs/*.err` and
 `train_sac_gnn.py` without a working script to copy from, and missed a
 few things that every previously *successful* submission had. Fixed here:
