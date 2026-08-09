@@ -28,6 +28,7 @@ New in v3:
 """
 
 import re
+import numpy as np
 import argparse
 import json
 import webbrowser
@@ -487,7 +488,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <div class="legend">
     <span><span class="ldot" style="background:#2a78d6"></span>Episode reward</span>
     <span><span class="ldot" style="background:#1baf7a"></span>10-ep moving avg</span>
-    <span style="font-size:11px;color:#eda100">⚡ Y-axis clipped to ±2σ by default</span>
+    <span style="font-size:11px;color:#eda100">⚡ Y-axis clipped by default (median ± 4×MAD)</span>
   </div>
   <div class="chart-wrap" style="height:260px">
     <canvas id="rewardChart"></canvas>
@@ -495,10 +496,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 </div>
 
 <div class="section">
-  <p class="section-title">Eval net profit at checkpoints</p>
+  <div class="section-header">
+    <p class="section-title">Eval net profit at checkpoints</p>
+    <button class="btn" id="evalClipBtn" onclick="toggleEvalClip()">Show full range</button>
+  </div>
   <div class="legend">
     <span><span class="ldot" style="background:#1baf7a"></span>Positive</span>
     <span><span class="ldot" style="background:#e34948"></span>Negative</span>
+    <span style="font-size:11px;color:#eda100">⚡ Y-axis clipped by default (median ± 4×MAD)</span>
   </div>
   <div class="chart-wrap" style="height:200px">
     <canvas id="evalChart"></canvas>
@@ -548,6 +553,8 @@ const evalData   = {eval_json};
 const timingData = {timing_json};
 const rewardClipLow  = {clip_low};
 const rewardClipHigh = {clip_high};
+const evalClipLow    = {eval_clip_low};
+const evalClipHigh   = {eval_clip_high};
 
 const eps     = trainData.map(r => r.episode);
 const rewards = trainData.map(r => r.reward);
@@ -621,7 +628,9 @@ function toggleClip() {{
   rewardChart.update();
 }}
 
-new Chart(document.getElementById('evalChart'), {{
+let evalClipped = true;
+let evalChart;
+evalChart = new Chart(document.getElementById('evalChart'), {{
   type:'bar',
   data:{{
     labels:evalData.map(e=>e.episode),
@@ -633,9 +642,25 @@ new Chart(document.getElementById('evalChart'), {{
     }}]
   }},
   options:{{...base, scales:{{...base.scales,
-    y:{{...base.scales.y, ticks:{{...base.scales.y.ticks, callback:profitFmt}}}}
+    y:{{...base.scales.y,
+      min:evalClipLow, max:evalClipHigh,
+      ticks:{{...base.scales.y.ticks, callback:profitFmt}}
+    }}
   }}}}
 }});
+
+function toggleEvalClip() {{
+  evalClipped = !evalClipped;
+  const sc = evalChart.options.scales.y;
+  if (evalClipped) {{
+    sc.min = evalClipLow; sc.max = evalClipHigh;
+    document.getElementById('evalClipBtn').textContent = 'Show full range';
+  }} else {{
+    delete sc.min; delete sc.max;
+    document.getElementById('evalClipBtn').textContent = 'Clip outliers';
+  }}
+  evalChart.update();
+}}
 
 new Chart(document.getElementById('doeChart'), {{
   type:'line',
@@ -688,24 +713,69 @@ def generate_report(data: dict, out_path: str) -> None:
     train   = data['train']
     evals   = data['eval']
 
-    # Compute reward clip bounds: mean ± 2.5 std, rounded
+    # Compute reward clip bounds using median + MAD (median absolute deviation).
+    #
+    # Why not simple percentiles (the old approach):
+    # The 3rd/97th percentile clip only excluded the first 20 episodes from
+    # the calculation. When catastrophic losses extend well past episode 20
+    # (e.g. still recovering through episode ~100-150, as seen in several
+    # real-price runs), 3% of a ~750-episode run is only ~22 episodes —
+    # not enough margin, so the percentile itself still lands on a
+    # catastrophic value and the "clipped" view still spans millions.
+    #
+    # Median + MAD is far more robust: MAD requires >50% of the data to be
+    # extreme before it gets pulled off course, versus percentiles needing
+    # only >3%. This means even a training run with a long catastrophic
+    # recovery phase (dozens or hundreds of early episodes) still produces
+    # a sensible clip range showing the settled late-training behaviour.
     rewards = [r['reward'] for r in train]
-    # Exclude catastrophic early exploration episodes (first 20) from clip calc
     stable_rewards = [r['reward'] for r in train if r['episode'] > 20]
     if stable_rewards:
-        sorted_r  = sorted(stable_rewards)
-        n         = len(sorted_r)
-        p5        = sorted_r[max(0, int(n * 0.03))]
-        p95       = sorted_r[min(n-1, int(n * 0.97))]
-        margin    = (p95 - p5) * 0.15
-        clip_low  = round(p5  - margin, -3)
-        clip_high = round(p95 + margin, -3)
+        arr = np.array(stable_rewards)
+        median = float(np.median(arr))
+        mad = float(np.median(np.abs(arr - median)))
+        # 1.4826 scales MAD to be comparable to std for normally-distributed
+        # data; k=4 gives a generous but not excessive window
+        robust_std = mad * 1.4826
+        if robust_std < 1.0:
+            # Degenerate case: nearly all values identical (e.g. flat-zero
+            # late-training plateau) — fall back to a small fixed margin
+            # around the median so the chart isn't a zero-height line
+            clip_low  = median - 5000
+            clip_high = median + 5000
+        else:
+            clip_low  = round(median - 4 * robust_std, -3)
+            clip_high = round(median + 4 * robust_std, -3)
         clip_high = max(clip_high, 10000)
         clip_low  = min(clip_low, -30000)
     elif rewards:
         clip_low, clip_high = -100000, 100000
     else:
         clip_low, clip_high = -100000, 100000
+
+    # Eval profit clip — same median+MAD approach, applied independently
+    # since eval profit is on a different scale (5-episode averages, fewer
+    # points, and typically smaller in magnitude than raw training reward).
+    # Previously the eval chart had NO clipping at all — a single
+    # catastrophic early eval (e.g. -$3.2M at episode 50) would set the
+    # y-axis scale for the entire chart, making all later checkpoints
+    # (which might be in the tens of thousands) look like a flat zero line.
+    eval_profits = [e['profit'] for e in evals]
+    if eval_profits:
+        arr = np.array(eval_profits)
+        median = float(np.median(arr))
+        mad = float(np.median(np.abs(arr - median)))
+        robust_std = mad * 1.4826
+        if robust_std < 1.0:
+            eval_clip_low  = median - 5000
+            eval_clip_high = median + 5000
+        else:
+            eval_clip_low  = round(median - 4 * robust_std, -3)
+            eval_clip_high = round(median + 4 * robust_std, -3)
+        eval_clip_high = max(eval_clip_high, 10000)
+        eval_clip_low  = min(eval_clip_low, -10000)
+    else:
+        eval_clip_low, eval_clip_high = -50000, 50000
 
     best_profit   = fmt_profit(summary.get('best_eval_profit'))
     profit_class  = 'positive' if (summary.get('best_eval_profit') or 0) >= 0 else 'negative'
@@ -763,6 +833,8 @@ def generate_report(data: dict, out_path: str) -> None:
         timing_json      = json.dumps(timing.get('durations', [])),
         clip_low         = clip_low,
         clip_high        = clip_high,
+        eval_clip_low    = eval_clip_low,
+        eval_clip_high   = eval_clip_high,
     )
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
@@ -774,6 +846,7 @@ def generate_report(data: dict, out_path: str) -> None:
         print(f'  Training time: {fmt_duration(timing.get("total_elapsed_min"))}')
         print(f'  Throughput   : {eps_hr:.1f} ep/hr')
         print(f'  Reward clip  : [{clip_low:,.0f}, {clip_high:,.0f}]')
+        print(f'  Eval clip    : [{eval_clip_low:,.0f}, {eval_clip_high:,.0f}]')
 
 
 # ---------------------------------------------------------------------------
