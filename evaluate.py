@@ -114,6 +114,7 @@ CASE_STUDIES = [
         "date":        "2024-01-25",
         "description": "Jan 2024 heatwave — tight DOE constraint, afternoon RRP spike",
         "tests":       "Tight DOE + spike timing",
+        "is_stress_test": False,
     },
     {
         "id":          "cs2_high_volatility",
@@ -121,6 +122,7 @@ CASE_STUDIES = [
         "date":        "2024-03-12",
         "description": "Large intraday RRP swings",
         "tests":       "Precise arbitrage timing",
+        "is_stress_test": False,
     },
     {
         "id":          "cs3_negative_rrp",
@@ -130,6 +132,16 @@ CASE_STUDIES = [
                         "(-$1,000/MWh). Original 2024-10-03 missing from VIC1 "
                         "parquet (AEMO data gap), replaced with confirmed date.",
         "tests":       "Bidirectional dispatch",
+        # This day is a deliberate STRESS TEST, not a "normal" trading day —
+        # it was specifically chosen for the most extreme negative RRP in
+        # the entire dataset. Empirically its profit magnitude
+        # (tens/hundreds of thousands, vs single-digit thousands on all
+        # other days) is 20-500x larger than the other 4 case studies,
+        # which means a naive pooled mean across all 5 days is dominated
+        # entirely by this one day and says almost nothing about "typical"
+        # performance. Excluded from the "Normal-day Mean" column in
+        # print_results_table(); reported separately under "Stress Test".
+        "is_stress_test": True,
     },
     {
         "id":          "cs4_winter_average",
@@ -137,6 +149,7 @@ CASE_STUDIES = [
         "date":        "2024-06-15",
         "description": "Moderate stable prices — baseline day",
         "tests":       "Baseline performance",
+        "is_stress_test": False,
     },
     {
         "id":          "cs5_weekend_low",
@@ -147,6 +160,7 @@ CASE_STUDIES = [
                         "from VIC1 parquet (AEMO data gap), replaced with "
                         "confirmed date.",
         "tests":       "Incentive price adaptation",
+        "is_stress_test": False,
     },
 ]
 
@@ -378,6 +392,7 @@ def evaluate_case_study(
         "case_study_name":    case_study["name"],
         "date":               date,
         "n_runs":             n_runs,
+        "is_stress_test":     case_study.get("is_stress_test", False),
         # Primary metric
         "mean_profit":        float(np.mean(profits)),
         "std_profit":         float(np.std(profits)),
@@ -402,40 +417,91 @@ def print_results_table(results_df: pd.DataFrame) -> str:
     Print and return formatted thesis Table 3.
 
     Format: agents as rows, case studies as columns, showing mean±std profit.
+
+    Normal-day Mean vs Stress Test
+    -------------------------------
+    The "Normal-day Mean" column averages ONLY the case studies flagged
+    is_stress_test=False (currently 4 of 5: summer peak, high volatility,
+    winter average, weekend low). The negative-RRP case study
+    (2024-02-13) is deliberately the most extreme day in the dataset —
+    its profit magnitude runs 20-500x larger than the other 4 days
+    (e.g. observed: SAC-GNN seed1 $120,490 vs $4,000-8,000 on other
+    days; SAC-GCN seed1 -$539,375 vs $5,000-8,000 on other days).
+
+    Pooling it into a single mean with the other 4 days means that one
+    day's outcome — not the agent's typical performance — determines
+    the headline number, and can flip the ranking between agents
+    depending on which direction that one extreme day happened to go.
+    It is reported in its own "Stress Test" section instead, so a
+    reader can see typical-day performance and worst-case behaviour
+    as two distinct, honestly-labelled numbers rather than one
+    misleading blend of both.
     """
     agents      = results_df["agent"].unique()
     case_studies = results_df["case_study_name"].unique()
+
+    # Determine which case studies are "normal" vs "stress test" from the data
+    cs_stress_flag = {}
+    for cs_name in case_studies:
+        rows = results_df[results_df["case_study_name"] == cs_name]
+        cs_stress_flag[cs_name] = bool(rows["is_stress_test"].iloc[0]) if "is_stress_test" in rows.columns and len(rows) > 0 else False
+
+    normal_cs = [cs for cs in case_studies if not cs_stress_flag[cs]]
+    stress_cs = [cs for cs in case_studies if cs_stress_flag[cs]]
 
     lines = []
     lines.append("\n" + "=" * 100)
     lines.append("THESIS TABLE 3 — SAC-GNN vs Baselines: Net Profit ($/day), Mean ± Std")
     lines.append("=" * 100)
 
-    # Header
-    header = f"{'Agent':<14}" + "".join(f"{cs:>18}" for cs in case_studies)
-    header += f"{'Mean':>12}"
+    # Header — normal case studies only, plus Normal-day Mean column
+    header = f"{'Agent':<14}" + "".join(f"{cs:>18}" for cs in normal_cs)
+    header += f"{'Normal-day Mean':>18}"
     lines.append(header)
     lines.append("-" * 100)
 
     for agent in agents:
         agent_df   = results_df[results_df["agent"] == agent]
         row        = f"{agent:<14}"
-        all_profits = []
-        for cs_name in case_studies:
+        normal_profits = []
+        for cs_name in normal_cs:
             cs_row = agent_df[agent_df["case_study_name"] == cs_name]
             if len(cs_row) > 0:
                 mean = cs_row["mean_profit"].values[0]
                 std  = cs_row["std_profit"].values[0]
                 row += f"  {mean:+8.0f}±{std:5.0f}"
-                all_profits.append(mean)
+                normal_profits.append(mean)
             else:
                 row += f"{'N/A':>18}"
-        if all_profits:
-            row += f"  {np.mean(all_profits):+10.0f}"
+        if normal_profits:
+            row += f"  {np.mean(normal_profits):+16.0f}"
         lines.append(row)
 
+    # Separate section for stress-test case studies — never pooled into
+    # the headline mean above
+    if stress_cs:
+        lines.append("=" * 100)
+        lines.append("STRESS TEST — extreme-condition day(s), reported separately")
+        lines.append("(deliberately excluded from Normal-day Mean above — see")
+        lines.append(" CASE_STUDIES[...]['is_stress_test'] docstring for rationale)")
+        lines.append("-" * 100)
+        header2 = f"{'Agent':<14}" + "".join(f"{cs:>22}" for cs in stress_cs)
+        lines.append(header2)
+        for agent in agents:
+            agent_df = results_df[results_df["agent"] == agent]
+            row = f"{agent:<14}"
+            for cs_name in stress_cs:
+                cs_row = agent_df[agent_df["case_study_name"] == cs_name]
+                if len(cs_row) > 0:
+                    mean = cs_row["mean_profit"].values[0]
+                    std  = cs_row["std_profit"].values[0]
+                    row += f"  {mean:+10.0f}±{std:8.0f}"
+                else:
+                    row += f"{'N/A':>22}"
+            lines.append(row)
+
     lines.append("=" * 100)
-    lines.append("DOE Compliance Rate (% steps with zero violation)")
+    lines.append("DOE Compliance Rate (% steps with zero violation) — all case studies")
     lines.append("-" * 100)
 
     for agent in agents:
@@ -451,7 +517,7 @@ def print_results_table(results_df: pd.DataFrame) -> str:
         lines.append(row)
 
     lines.append("=" * 100)
-    lines.append("Mean Participation Rate ρ")
+    lines.append("Mean Participation Rate ρ — all case studies")
     lines.append("-" * 100)
 
     for agent in agents:
@@ -473,7 +539,21 @@ def print_results_table(results_df: pd.DataFrame) -> str:
 
 
 def make_plots(results_df: pd.DataFrame, output_dir: Path) -> None:
-    """Generate comparison bar charts for the three primary metrics."""
+    """
+    Generate comparison bar charts for the three primary metrics.
+
+    Two separate figures are produced rather than one:
+      1. metrics_comparison.png — normal-day case studies only (profit
+         panel uses a shared, readable y-axis scale)
+      2. stress_test_comparison.png — the negative-RRP stress-test day,
+         plotted on its own scale since its magnitude (tens/hundreds of
+         thousands of $) would otherwise compress the normal-day bars
+         to near-invisible slivers on a shared axis.
+
+    This mirrors the print_results_table() split — see that function's
+    docstring for the full rationale on why the stress-test day is
+    never pooled with the other 4.
+    """
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -483,66 +563,96 @@ def make_plots(results_df: pd.DataFrame, output_dir: Path) -> None:
         return
 
     agents       = list(results_df["agent"].unique())
-    case_studies = list(results_df["case_study_name"].unique())
+    all_case_studies = list(results_df["case_study_name"].unique())
     n_agents     = len(agents)
-    n_cs         = len(case_studies)
+
+    # Split case studies by stress-test flag
+    cs_stress_flag = {}
+    for cs_name in all_case_studies:
+        rows = results_df[results_df["case_study_name"] == cs_name]
+        cs_stress_flag[cs_name] = bool(rows["is_stress_test"].iloc[0]) if "is_stress_test" in rows.columns and len(rows) > 0 else False
+
+    normal_case_studies = [cs for cs in all_case_studies if not cs_stress_flag[cs]]
+    stress_case_studies = [cs for cs in all_case_studies if cs_stress_flag[cs]]
 
     colors = ["#2a78d6", "#1baf7a", "#eda100", "#e34948", "#9b59b6", "#00bcd4"]
-    x      = np.arange(n_cs)
-    width  = 0.8 / n_agents
 
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-    fig.suptitle(
-        "SAC-GNN V2G Hub — Case Study Evaluation\n"
-        "Inner Melbourne 21 Hubs, VIC1 2024 Held-Out Prices",
-        fontsize=12,
+    def _plot_metric_panels(case_studies, title_suffix, filename):
+        n_cs = len(case_studies)
+        if n_cs == 0:
+            return
+        x = np.arange(n_cs)
+        width = 0.8 / n_agents
+
+        fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+        fig.suptitle(
+            f"SAC-GNN V2G Hub — Case Study Evaluation{title_suffix}\n"
+            "Inner Melbourne 21 Hubs, VIC1 2024 Held-Out Prices",
+            fontsize=12,
+        )
+
+        for col, (metric, ylabel, panel_title) in enumerate([
+            ("mean_profit",        "Net profit ($/day)",  "Arbitrage Net Profit"),
+            ("mean_doe_compliance","DOE compliance rate",  "DOE Compliance Rate"),
+            ("mean_participation", "Participation rate ρ", "EV Owner Participation"),
+        ]):
+            ax = axes[col]
+            for j, agent in enumerate(agents):
+                agent_df = results_df[results_df["agent"] == agent]
+                vals, errs = [], []
+                for cs_name in case_studies:
+                    row = agent_df[agent_df["case_study_name"] == cs_name]
+                    if len(row) > 0:
+                        vals.append(row[metric].values[0])
+                        err_col = metric.replace("mean_", "std_")
+                        errs.append(row[err_col].values[0] if err_col in row.columns else 0)
+                    else:
+                        vals.append(0)
+                        errs.append(0)
+
+                offset = (j - n_agents / 2 + 0.5) * width
+                ax.bar(
+                    x + offset, vals, width,
+                    yerr=errs, capsize=3,
+                    label=agent,
+                    color=colors[j % len(colors)],
+                    edgecolor="white", linewidth=0.5,
+                )
+
+            ax.set_title(panel_title, fontsize=11)
+            ax.set_ylabel(ylabel, fontsize=10)
+            ax.set_xticks(x)
+            ax.set_xticklabels(
+                [cs.replace(" ", "\n") for cs in case_studies],
+                fontsize=8,
+            )
+            ax.grid(axis="y", alpha=0.3)
+            if col == 0:
+                ax.axhline(0, color="black", linewidth=0.5, linestyle="--")
+            if col == 2:
+                ax.legend(fontsize=8, loc="upper right")
+
+        plt.tight_layout()
+        out_path = output_dir / filename
+        plt.savefig(out_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        logger.info(f"Plot saved: {out_path}")
+
+    # Normal-day comparison — shared readable scale across 4 typical days
+    _plot_metric_panels(
+        normal_case_studies,
+        " (Normal-day Case Studies)",
+        "metrics_comparison.png",
     )
 
-    for col, (metric, ylabel, title) in enumerate([
-        ("mean_profit",       "Net profit ($/day)", "Arbitrage Net Profit"),
-        ("mean_doe_compliance","DOE compliance rate", "DOE Compliance Rate"),
-        ("mean_participation", "Participation rate ρ", "EV Owner Participation"),
-    ]):
-        ax = axes[col]
-        for j, agent in enumerate(agents):
-            agent_df = results_df[results_df["agent"] == agent]
-            vals, errs = [], []
-            for cs_name in case_studies:
-                row = agent_df[agent_df["case_study_name"] == cs_name]
-                if len(row) > 0:
-                    vals.append(row[metric].values[0])
-                    err_col = metric.replace("mean_", "std_")
-                    errs.append(row[err_col].values[0] if err_col in row.columns else 0)
-                else:
-                    vals.append(0)
-                    errs.append(0)
-
-            offset = (j - n_agents / 2 + 0.5) * width
-            bars = ax.bar(
-                x + offset, vals, width,
-                yerr=errs, capsize=3,
-                label=agent,
-                color=colors[j % len(colors)],
-                edgecolor="white", linewidth=0.5,
-            )
-
-        ax.set_title(title, fontsize=11)
-        ax.set_ylabel(ylabel, fontsize=10)
-        ax.set_xticks(x)
-        ax.set_xticklabels(
-            [cs.replace(" ", "\n") for cs in case_studies],
-            fontsize=8,
-        )
-        ax.grid(axis="y", alpha=0.3)
-        if col == 0:
-            ax.axhline(0, color="black", linewidth=0.5, linestyle="--")
-        if col == 2:
-            ax.legend(fontsize=8, loc="upper right")
-
-    plt.tight_layout()
-    out_path = output_dir / "metrics_comparison.png"
-    plt.savefig(out_path, dpi=150, bbox_inches="tight")
-    logger.info(f"Plot saved: {out_path}")
+    # Stress-test day — plotted separately since its $ magnitude is
+    # 20-500x the normal days and would otherwise flatten them to
+    # invisible slivers on a shared axis (see docstring above)
+    _plot_metric_panels(
+        stress_case_studies,
+        " (Stress Test — Extreme Negative RRP)",
+        "stress_test_comparison.png",
+    )
 
 
 # ---------------------------------------------------------------------------
