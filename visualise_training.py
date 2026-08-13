@@ -45,6 +45,26 @@ def parse_time(t: str) -> int:
     return h * 3600 + m * 60 + s
 
 
+def _finalise_normal_profit(eval_row: dict, per_day: list, stress_date: str) -> None:
+    """
+    Retroactively overwrite eval_row['profit_normal'] using the per-day
+    [date] profit=... lines collected for that checkpoint, excluding
+    stress_date. This works for BOTH pre-fix logs (which only ever had
+    a pooled "profit=" summary) and post-fix logs (which additionally
+    print "profit(normal 4)="), because the per-day breakdown lines
+    with explicit dates were present in the log format all along —
+    only the pooled summary line changed between versions.
+
+    Falls back to leaving eval_row['profit_normal'] unchanged (whatever
+    was set from the summary line — either a logged normal-day value or
+    the pooled value) if no per-day lines were found, e.g. very old
+    logs predating the per-day breakdown feature entirely.
+    """
+    normal_vals = [p for date, p in per_day if date != stress_date]
+    if normal_vals:
+        eval_row['profit_normal'] = float(np.mean(normal_vals))
+
+
 def parse_log(log_path: str) -> dict:
     train_re   = re.compile(
         r'(\d{2}:\d{2}:\d{2})\s+\[INFO\]\s+Ep\s+(\d+)/(\d+)'
@@ -78,12 +98,30 @@ def parse_log(log_path: str) -> dict:
     jobend_re  = re.compile(r'Job finished:.*?(\d{2}:\d{2}:\d{2})')
     complete_re= re.compile(r'Training complete in ([\d.]+) minutes')
 
+    # Per-day breakdown line, e.g.:
+    #   "     [2024-01-25] profit=  4472.6 | ρ=0.095 | doe=0.0kW"
+    #   "     [2024-02-13] [STRESS TEST] profit=120489.7 | ..."   (post-fix)
+    # Present in BOTH old and new log formats — this lets us retroactively
+    # compute the true normal-day mean even for runs trained before the
+    # stress-test fix landed in train_sac_gnn.py, by matching the date
+    # against STRESS_TEST_DATE directly rather than relying on a
+    # profit(normal 4)= field that older logs never printed.
+    per_day_re = re.compile(
+        r'\[INFO\]\s+\[(\d{4}-\d{2}-\d{2})\](?:\s+\[STRESS TEST\])?\s+profit=\s*([-\d.]+)'
+    )
+    # Must match STRESS_TEST_DAY_INDEX = 2 -> FIXED_EVAL_DAYS[2] in
+    # train_sac_gnn.py. Kept as a plain date string here (rather than an
+    # index) since it's the date, not position, that's stable across log
+    # format versions and any future reordering of FIXED_EVAL_DAYS.
+    STRESS_TEST_DATE = '2024-02-13'
+
     train_rows, eval_rows, best_profits = [], [], []
     cancelled = False
     completed = False
     job_id = node = total_episodes = None
     train_start_time = job_wall_start = job_wall_end = None
     last_train_ep = None
+    pending_per_day = []
     start_episode = 1
     training_minutes = None
 
@@ -138,17 +176,38 @@ def parse_log(log_path: str) -> dict:
 
         m = eval_re.search(line)
         if m:
+            # A new eval summary line means any per-day lines collected
+            # since the PREVIOUS eval line belong to that previous eval —
+            # finalise it now before starting to collect for this one.
+            if eval_rows and pending_per_day:
+                _finalise_normal_profit(eval_rows[-1], pending_per_day, STRESS_TEST_DATE)
+            pending_per_day = []
+
+            pooled_profit = float(m.group(2))
+            logged_normal = float(m.group(3)) if m.group(3) else None
             eval_rows.append({
                 'time':          m.group(1),
                 'episode':       last_train_ep,
-                'profit':        float(m.group(2)),
-                # profit_normal (excludes stress-test day) is only present
-                # in post-fix logs; falls back to the pooled value for
-                # older logs so charts/tables still render sensibly
-                'profit_normal': float(m.group(3)) if m.group(3) else float(m.group(2)),
+                'profit':        pooled_profit,
+                # Placeholder — replaced with the true per-day-derived
+                # normal-day mean once the following [date] profit=...
+                # lines are parsed (see per_day_re block below and the
+                # finalisation call above / after the loop). Falls back
+                # to logged_normal (post-fix logs) or pooled_profit
+                # (pre-fix logs with no per-day breakdown at all) if no
+                # per-day lines are ever found for this checkpoint.
+                'profit_normal': logged_normal if logged_normal is not None else pooled_profit,
                 'participation': float(m.group(4)),
                 'doe_viol':      float(m.group(5)),
             })
+            continue
+
+        # Per-day breakdown lines belonging to the eval summary just
+        # appended above — accumulated here, applied to eval_rows[-1]
+        # once the next eval line (or end of file) is reached.
+        m = per_day_re.search(line)
+        if m:
+            pending_per_day.append((m.group(1), float(m.group(2))))
             continue
 
         m = best_re.search(line)
@@ -157,6 +216,12 @@ def parse_log(log_path: str) -> dict:
 
         if cancel_re.search(line):
             cancelled = True
+
+    # Finalise the LAST eval checkpoint's normal-day mean — its per-day
+    # lines were still being accumulated when the file ended, so there
+    # was no subsequent eval line to trigger the finalisation above.
+    if eval_rows and pending_per_day:
+        _finalise_normal_profit(eval_rows[-1], pending_per_day, STRESS_TEST_DATE)
 
     return {
         'train':            train_rows,
