@@ -55,12 +55,21 @@ def parse_log(log_path: str) -> dict:
         r'(?:.*?buf=\s*(\d+))?'
         r'(?:.*?[aα]=([\d.e+-]+))?'
     )
+    # Handles both the old log format (profit=X ±Y) and the new one that
+    # separates pooled vs normal-day-only profit (profit(all 5)=X ...
+    # profit(normal 4)=Y ...) after the stress-test-day fix. Group 2 is
+    # always the pooled/primary profit value for backward compatibility;
+    # group 3 (optional) captures the normal-day value when present.
     eval_re    = re.compile(
-        r'(\d{2}:\d{2}:\d{2})\s+\[INFO\].*?Eval.*?profit=([-\d.]+)'
+        r'(\d{2}:\d{2}:\d{2})\s+\[INFO\].*?Eval:\s+profit(?:\(all 5\))?=([-\d.]+)'
+        r'(?:.*?profit\(normal 4\)=([-\d.]+))?'
         r'.*?participation=([\d.]+)'
         r'.*?doe_viol=([\d.]+)kW'
     )
-    best_re    = re.compile(r'\[INFO\].*?New best net profit:\s*([-\d.]+)')
+    # Matches both "New best net profit:" (pre-fix logs) and
+    # "New best normal-day profit:" (post-fix logs, using the
+    # stress-test-excluded metric for checkpoint selection)
+    best_re    = re.compile(r'\[INFO\].*?New best (?:net|normal-day) profit:\s*([-\d.]+)')
     cancel_re  = re.compile(r'CANCELLED.*DUE TO TIME LIMIT')
     job_re     = re.compile(r'JOB\s+(\d+)\s+ON\s+(\S+)')
     started_re = re.compile(r'(\d{2}:\d{2}:\d{2})\s+\[INFO\]\s+Starting training:\s+(\d+) episodes')
@@ -133,8 +142,12 @@ def parse_log(log_path: str) -> dict:
                 'time':          m.group(1),
                 'episode':       last_train_ep,
                 'profit':        float(m.group(2)),
-                'participation': float(m.group(3)),
-                'doe_viol':      float(m.group(4)),
+                # profit_normal (excludes stress-test day) is only present
+                # in post-fix logs; falls back to the pooled value for
+                # older logs so charts/tables still render sensibly
+                'profit_normal': float(m.group(3)) if m.group(3) else float(m.group(2)),
+                'participation': float(m.group(4)),
+                'doe_viol':      float(m.group(5)),
             })
             continue
 
@@ -305,8 +318,8 @@ def compute_summary(data: dict) -> dict:
     if not train:
         return {}
 
-    best_eval   = max((e['profit'] for e in evals), default=None)
-    best_ep     = next((e['episode'] for e in evals if e['profit'] == best_eval), None) if best_eval is not None else None
+    best_eval   = max((e.get('profit_normal', e['profit']) for e in evals), default=None)
+    best_ep     = next((e['episode'] for e in evals if e.get('profit_normal', e['profit']) == best_eval), None) if best_eval is not None else None
     last_ep     = train[-1]['episode']
     total_eps   = data['total_episodes'] or last_ep
     last_doe    = train[-1]['doe_viol']
@@ -497,16 +510,30 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
 <div class="section">
   <div class="section-header">
-    <p class="section-title">Eval net profit at checkpoints</p>
+    <p class="section-title">Eval net profit at checkpoints (normal-day mean, excl. stress test)</p>
     <button class="btn" id="evalClipBtn" onclick="toggleEvalClip()">Show full range</button>
   </div>
   <div class="legend">
     <span><span class="ldot" style="background:#1baf7a"></span>Positive</span>
     <span><span class="ldot" style="background:#e34948"></span>Negative</span>
     <span style="font-size:11px;color:#eda100">⚡ Y-axis clipped by default (median ± 4×MAD)</span>
+    <span style="font-size:11px;color:#898781">Excludes the extreme negative-RRP stress-test day — matches best.pt selection metric</span>
   </div>
   <div class="chart-wrap" style="height:200px">
     <canvas id="evalChart"></canvas>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-header">
+    <p class="section-title">Eval net profit — all 5 days pooled (for reference)</p>
+  </div>
+  <div class="legend">
+    <span><span class="ldot" style="background:#9b59b6"></span>Pooled (incl. stress test)</span>
+    <span style="font-size:11px;color:#898781">Dominated by the extreme negative-RRP day — shown for reference only, not used for checkpoint selection</span>
+  </div>
+  <div class="chart-wrap" style="height:200px">
+    <canvas id="evalPooledChart"></canvas>
   </div>
 </div>
 
@@ -536,7 +563,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     <table>
       <thead>
         <tr>
-          <th>Episode</th><th>Eval profit ($)</th>
+          <th>Episode</th><th>Eval profit — Normal-day ($)</th>
+          <th>Eval profit — Pooled all 5 ($)</th>
           <th>Participation ρ</th><th>DOE violation (kW)</th>
         </tr>
       </thead>
@@ -630,14 +658,18 @@ function toggleClip() {{
 
 let evalClipped = true;
 let evalChart;
+// Primary chart uses profit_normal (excludes the stress-test day) — this
+// is the metric that actually drives best.pt selection and convergence
+// detection in train_sac_gnn.py, so this chart should match what the
+// training loop was actually optimising against.
 evalChart = new Chart(document.getElementById('evalChart'), {{
   type:'bar',
   data:{{
     labels:evalData.map(e=>e.episode),
     datasets:[{{
-      label:'Eval profit',
-      data:evalData.map(e=>e.profit),
-      backgroundColor:evalData.map(e=>e.profit>=0?'#1baf7a':'#e34948'),
+      label:'Eval profit (normal-day, excl. stress test)',
+      data:evalData.map(e=>e.profit_normal),
+      backgroundColor:evalData.map(e=>e.profit_normal>=0?'#1baf7a':'#e34948'),
       borderRadius:3, borderSkipped:false
     }}]
   }},
@@ -661,6 +693,26 @@ function toggleEvalClip() {{
   }}
   evalChart.update();
 }}
+
+// Secondary chart: all 5 days pooled (includes the extreme stress-test
+// day) — shown for reference/transparency only, un-clipped since its
+// whole purpose here is to show the reader how dominant that one day's
+// magnitude is relative to the normal-day chart above.
+new Chart(document.getElementById('evalPooledChart'), {{
+  type:'bar',
+  data:{{
+    labels:evalData.map(e=>e.episode),
+    datasets:[{{
+      label:'Eval profit (pooled, all 5 days)',
+      data:evalData.map(e=>e.profit),
+      backgroundColor:'#9b59b6',
+      borderRadius:3, borderSkipped:false
+    }}]
+  }},
+  options:{{...base, scales:{{...base.scales,
+    y:{{...base.scales.y, ticks:{{...base.scales.y.ticks, callback:profitFmt}}}}
+  }}}}
+}});
 
 new Chart(document.getElementById('doeChart'), {{
   type:'line',
@@ -693,10 +745,12 @@ new Chart(document.getElementById('alphaChart'), {{
 
 const tbody = document.getElementById('evalTable');
 evalData.forEach(e => {{
-  const cls = e.profit>=0?'pos':'neg', sign=e.profit>=0?'+':'';
+  const clsN = e.profit_normal>=0?'pos':'neg', signN=e.profit_normal>=0?'+':'';
+  const clsP = e.profit>=0?'pos':'neg', signP=e.profit>=0?'+':'';
   tbody.innerHTML += `<tr>
     <td>${{e.episode}}</td>
-    <td class="${{cls}}">${{sign}}${{e.profit.toLocaleString('en-AU',{{maximumFractionDigits:0}})}}</td>
+    <td class="${{clsN}}">${{signN}}${{e.profit_normal.toLocaleString('en-AU',{{maximumFractionDigits:0}})}}</td>
+    <td class="${{clsP}}">${{signP}}${{e.profit.toLocaleString('en-AU',{{maximumFractionDigits:0}})}}</td>
     <td>${{(e.participation*100).toFixed(1)}}%</td>
     <td>${{e.doe_viol.toFixed(1)}}</td>
   </tr>`;
@@ -760,7 +814,7 @@ def generate_report(data: dict, out_path: str) -> None:
     # catastrophic early eval (e.g. -$3.2M at episode 50) would set the
     # y-axis scale for the entire chart, making all later checkpoints
     # (which might be in the tens of thousands) look like a flat zero line.
-    eval_profits = [e['profit'] for e in evals]
+    eval_profits = [e.get('profit_normal', e['profit']) for e in evals]
     if eval_profits:
         arr = np.array(eval_profits)
         median = float(np.median(arr))

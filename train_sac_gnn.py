@@ -266,12 +266,25 @@ def make_env(cfg: dict, split: str = "train", seed: int = 42) -> NEMDOEEnv:
 FIXED_EVAL_DAYS = [
     "2024-01-25",   # summer peak — heatwave, tight DOE, afternoon spike
     "2024-03-12",   # high volatility — large intraday RRP swings
-    "2024-02-13",   # negative RRP — 131 negative intervals, min=-$1000/MWh
-                    # (2024-10-03 was missing from VIC1 parquet — data gap)
+    "2024-02-13",   # NEGATIVE RRP / STRESS TEST — 131 negative intervals,
+                    # min=-$1000/MWh (2024-10-03 was missing from VIC1
+                    # parquet — data gap). This day is the most extreme
+                    # in the entire dataset: observed profit magnitude on
+                    # this day runs 20-500x larger than the other 4 days
+                    # (e.g. seed1 SAC-GNN: +$120,490 here vs $4k-8k on
+                    # other days; SAC-GCN: -$539,375 here vs $5k-8k
+                    # elsewhere). Index 2 in this list — see
+                    # STRESS_TEST_DAY_INDEX below.
     "2024-06-15",   # winter average — moderate stable prices, baseline
     "2024-01-28",   # weekend low demand — Sunday, 106 neg RRP intervals
                     # (2024-08-20 was missing from VIC1 parquet — data gap)
 ]
+
+# Index of the stress-test day within FIXED_EVAL_DAYS (0-based).
+# Used to exclude it from best.pt selection and convergence detection —
+# see evaluate() docstring for why pooling it in produces a misleading
+# "mean_net_profit" that one extreme day can dominate or invert.
+STRESS_TEST_DAY_INDEX = 2
 
 
 def evaluate(
@@ -295,9 +308,24 @@ def evaluate(
     Per-day results are logged individually for the thesis case study
     table (Table 3), in addition to the aggregate mean.
 
+    Stress-test day exclusion
+    --------------------------
+    FIXED_EVAL_DAYS[STRESS_TEST_DAY_INDEX] (2024-02-13, extreme negative
+    RRP) has a profit magnitude 20-500x larger than the other 4 days.
+    Pooling it into "mean_net_profit" means one day's outcome — not the
+    agent's typical performance — drives best.pt selection and
+    convergence detection, and can flip the ranking between checkpoints
+    or agents depending on which direction that one day happened to go.
+
+    "mean_net_profit_normal" excludes it and is the value best.pt
+    selection and convergence detection should use going forward.
+    "mean_net_profit" (all 5 days pooled) is retained for backward
+    compatibility with existing logs/visualisers and reported alongside
+    it, not in place of it.
+
     Returns
     -------
-    dict with mean metrics + per-day breakdown for logging.
+    dict with pooled mean, normal-day-only mean, and per-day breakdown.
     """
     net_profits = []
     participation_rates = []
@@ -334,6 +362,7 @@ def evaluate(
             "profit": ep_reward,
             "participation": mean_rho,
             "doe_viol_kw": total_doe_kw,
+            "is_stress_test": (i == STRESS_TEST_DAY_INDEX),
         })
 
     # Pad with random days if needed
@@ -358,10 +387,24 @@ def evaluate(
         participation_rates.append(mean_rho)
         doe_violation_totals.append(total_doe_kw)
 
+    # Normal-day-only mean: excludes the stress-test day if it's within
+    # the fixed-day range evaluated this call (n_episodes >= len(FIXED_EVAL_DAYS)
+    # guarantees it was included; if n_episodes < 5 and truncated before
+    # reaching STRESS_TEST_DAY_INDEX, there's nothing to exclude).
+    if len(eval_dates) > STRESS_TEST_DAY_INDEX:
+        normal_profits = [
+            p for i, p in enumerate(net_profits[:len(eval_dates)])
+            if i != STRESS_TEST_DAY_INDEX
+        ] + net_profits[len(eval_dates):]  # keep any padded random days
+    else:
+        normal_profits = net_profits
+
     return {
         "eval_episode":            episode_num,
-        "mean_net_profit":         float(np.mean(net_profits)),
+        "mean_net_profit":         float(np.mean(net_profits)),        # pooled (all days, incl. stress test)
+        "mean_net_profit_normal":  float(np.mean(normal_profits)),      # excludes stress-test day — use for best.pt / convergence
         "std_net_profit":          float(np.std(net_profits)),
+        "std_net_profit_normal":   float(np.std(normal_profits)),
         "mean_participation_rate": float(np.mean(participation_rates)),
         "mean_doe_violation_kw":   float(np.mean(doe_violation_totals)),
         "per_day":                 per_day_results,   # for thesis Table 3
@@ -557,11 +600,16 @@ def train(cfg: dict, resume_path: str = None, no_eval: bool = False, start_episo
         }
         training_log.append(log_entry)
 
-        # ── Convergence detection ─────────────────────────────────────
-        # Track when agent reaches 90% of asymptotic reward (RQ4 metric)
         # ── Convergence detection (eval-profit std based) ────────────
+        # Uses mean_net_profit_normal (excludes the stress-test day at
+        # FIXED_EVAL_DAYS[STRESS_TEST_DAY_INDEX]) rather than the pooled
+        # mean_net_profit. The stress-test day's profit magnitude
+        # (20-500x the other 4 days — see evaluate() docstring) made the
+        # pooled std wildly inflated ($39k-$891k observed in seed1 runs),
+        # which meant convergence could essentially never be detected
+        # regardless of how stable the policy actually was on typical days.
         if convergence_episode is None and len(eval_log) >= cfg["convergence_window"]:
-            recent_profits = [e["mean_net_profit"] for e in eval_log[-cfg["convergence_window"]:]]
+            recent_profits = [e["mean_net_profit_normal"] for e in eval_log[-cfg["convergence_window"]:]]
             profit_std         = float(np.std(recent_profits))
             profit_improvement = abs(recent_profits[-1] - recent_profits[0])
             profit_mean        = float(np.mean(recent_profits))
@@ -571,7 +619,7 @@ def train(cfg: dict, resume_path: str = None, no_eval: bool = False, start_episo
                 convergence_episode = episode
                 logger.info(
                     f"  → CONVERGED at episode {episode} | "
-                    f"mean_profit=${profit_mean:.0f} | "
+                    f"normal_day_mean_profit=${profit_mean:.0f} | "
                     f"std=${profit_std:.0f} | "
                     f"improvement=${profit_improvement:.0f} "
                     f"(threshold=${threshold:.0f})"
@@ -579,7 +627,8 @@ def train(cfg: dict, resume_path: str = None, no_eval: bool = False, start_episo
             else:
                 status = "converging" if profit_std < threshold * 2 else "not yet"
                 logger.info(
-                    f"  → Convergence check: std=${profit_std:.0f} | "
+                    f"  → Convergence check (normal-day, excl. stress test): "
+                    f"std=${profit_std:.0f} | "
                     f"improvement=${profit_improvement:.0f} | "
                     f"threshold=${threshold:.0f} ({status})"
                 )
@@ -622,25 +671,33 @@ def train(cfg: dict, resume_path: str = None, no_eval: bool = False, start_episo
             eval_log.append(eval_metrics)
 
             logger.info(
-                f"  → Eval: profit={eval_metrics['mean_net_profit']:.1f} "
+                f"  → Eval: profit(all 5)={eval_metrics['mean_net_profit']:.1f} "
                 f"±{eval_metrics['std_net_profit']:.1f} | "
+                f"profit(normal 4)={eval_metrics['mean_net_profit_normal']:.1f} "
+                f"±{eval_metrics['std_net_profit_normal']:.1f} | "
                 f"participation={eval_metrics['mean_participation_rate']:.3f} | "
                 f"doe_viol={eval_metrics['mean_doe_violation_kw']:.1f}kW"
             )
             # Log per fixed day for thesis Table 3
             for d in eval_metrics.get("per_day", []):
+                stress_tag = " [STRESS TEST]" if d.get("is_stress_test") else ""
                 logger.info(
-                    f"     [{d['date']}] profit={d['profit']:8.1f} | "
+                    f"     [{d['date']}]{stress_tag} profit={d['profit']:8.1f} | "
                     f"ρ={d['participation']:.3f} | "
                     f"doe={d['doe_viol_kw']:.1f}kW"
                 )
 
-            # Save best checkpoint by conformance rate
-            if eval_metrics["mean_net_profit"] > best_net_profit:
-                best_net_profit = eval_metrics["mean_net_profit"]
+            # Save best checkpoint using normal-day mean (excludes the
+            # stress-test day — see evaluate() docstring). Using the
+            # pooled mean_net_profit here would let one extreme day's
+            # outcome (20-500x the magnitude of typical days) determine
+            # which checkpoint gets kept as "best", independent of
+            # whether the policy is actually improving on typical days.
+            if eval_metrics["mean_net_profit_normal"] > best_net_profit:
+                best_net_profit = eval_metrics["mean_net_profit_normal"]
                 agent.save(str(ckpt_dir / "best.pt"))
                 logger.info(
-                    f"  → New best net profit: {best_net_profit:.1f} — saved best.pt"
+                    f"  → New best normal-day profit: {best_net_profit:.1f} — saved best.pt"
                 )
 
             # Save eval log incrementally
@@ -669,7 +726,7 @@ def train(cfg: dict, resume_path: str = None, no_eval: bool = False, start_episo
     logger.info("=" * 60)
     logger.info(f"Training complete in {elapsed:.1f} minutes")
     logger.info(f"Final checkpoint: {ckpt_dir / 'final.pt'}")
-    logger.info(f"Best net profit: {best_net_profit:.1f}")
+    logger.info(f"Best normal-day net profit (excl. stress test): {best_net_profit:.1f}")
     if convergence_episode:
         logger.info(f"Convergence episode: {convergence_episode}")
     else:
