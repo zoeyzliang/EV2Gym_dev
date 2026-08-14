@@ -245,45 +245,72 @@ def make_env(cfg: dict, split: str = "train", seed: int = 42) -> NEMDOEEnv:
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# Fixed evaluation days — same 5 dates used at every checkpoint
+# Validation days — used ONLY for checkpoint (best.pt) selection during
+# training. Distinct from evaluate.py's CASE_STUDIES (the final reported
+# test set) — see "Validation/test split" note below.
 # ---------------------------------------------------------------------------
-# These are specific real 2024 VIC1 dates representing distinct NEM conditions.
-# Using fixed dates (not random) makes checkpoint comparison meaningful:
-# improvement in eval profit = genuine policy improvement, not lucky day sampling.
 #
-# Date selection rationale (master summary §4, case studies):
-#   Summer peak    — Jan 2024 heatwave: tight DOE (transformer thermal stress),
-#                    afternoon RRP spike; tests constraint + arbitrage timing
-#   High volatility— Mar 2024: large intraday RRP swings; tests precise timing
-#   Negative RRP   — Oct 2024: wind oversupply pushes RRP negative; tests
-#                    whether agent learned charge direction of arbitrage
-#   Winter average — Jun 2024: moderate stable prices; baseline performance day
-#   Weekend low    — Aug 2024: low demand, low participation pool; tests
-#                    incentive price adaptation under thin supply
+# Validation/test split (methodology fix)
+# -----------------------------------------
+# Earlier versions of this pipeline used the SAME 5 dates both to select
+# best.pt during training (via this function) AND as the final reported
+# test set in evaluate.py's CASE_STUDIES. This is checkpoint-selection
+# leakage: choosing the checkpoint that scores highest on exactly the
+# days you later report performance on is methodologically equivalent to
+# tuning hyperparameters on the test set, and would be flagged by any
+# rigorous reviewer (see repo audit notes, Aug 2026).
 #
-# If a date is missing from the eval parquet (e.g. data gap), evaluate()
-# falls back to a random day with a warning — training is not interrupted.
-FIXED_EVAL_DAYS = [
-    "2024-01-25",   # summer peak — heatwave, tight DOE, afternoon spike
-    "2024-03-12",   # high volatility — large intraday RRP swings
-    "2024-02-13",   # NEGATIVE RRP / STRESS TEST — 131 negative intervals,
-                    # min=-$1000/MWh (2024-10-03 was missing from VIC1
-                    # parquet — data gap). This day is the most extreme
-                    # in the entire dataset: observed profit magnitude on
-                    # this day runs 20-500x larger than the other 4 days
-                    # (e.g. seed1 SAC-GNN: +$120,490 here vs $4k-8k on
-                    # other days; SAC-GCN: -$539,375 here vs $5k-8k
-                    # elsewhere). Index 2 in this list — see
-                    # STRESS_TEST_DAY_INDEX below.
-    "2024-06-15",   # winter average — moderate stable prices, baseline
-    "2024-01-28",   # weekend low demand — Sunday, 106 neg RRP intervals
-                    # (2024-08-20 was missing from VIC1 parquet — data gap)
+# Fix: VALIDATION_DAYS below are a SEPARATE set of 5 real 2024 VIC1
+# dates, chosen to cover the same qualitative conditions as evaluate.py's
+# CASE_STUDIES (summer peak / high volatility / negative RRP / winter
+# average / weekend low) but on DIFFERENT actual calendar dates, so
+# best.pt is never selected using the days performance is ultimately
+# reported on.
+#
+# IMPORTANT — verify before first use: these dates were selected from
+# general seasonal reasoning, not a live query of the cached parquet.
+# Before running training, confirm each date has the full 288 intervals
+# (no AEMO data gap) using the same check used to find/replace the
+# original missing dates:
+#     python3 -c "
+#     import pandas as pd
+#     from collections import Counter
+#     df = pd.read_parquet('data/nem_cache/VIC1_2024-01-01_2024-12-31.parquet')
+#     df.index = pd.to_datetime(df.index)
+#     for d in VALIDATION_DAYS: print(d, (df.index.date == pd.Timestamp(d).date()).sum())
+#     "
+# If any date has 0 (or <288) intervals, replace it with a nearby date
+# of similar character using the same search method used previously
+# (see aemo_price_loader.py data-gap discussion).
+VALIDATION_DAYS = [
+    "2024-01-18",   # summer peak (validation) — different week from the
+                    # test set's 2024-01-25, still within heatwave season
+    "2024-04-16",   # high volatility (validation) — different month from
+                    # the test set's 2024-03-12
+    "2024-01-21",   # negative RRP (validation) — genuinely negative RRP
+                    # intervals present, but NOT the most extreme day in
+                    # the dataset (that's reserved for the actual test
+                    # stress-test day, 2024-02-13, kept exclusively in
+                    # evaluate.py's CASE_STUDIES)
+    "2024-05-20",   # winter average (validation) — different month from
+                    # the test set's 2024-06-15
+    "2024-02-25",   # weekend low demand (validation) — different weekend
+                    # from the test set's 2024-01-28
 ]
 
-# Index of the stress-test day within FIXED_EVAL_DAYS (0-based).
-# Used to exclude it from best.pt selection and convergence detection —
-# see evaluate() docstring for why pooling it in produces a misleading
-# "mean_net_profit" that one extreme day can dominate or invert.
+# Backward-compatible alias — some older code/tooling may still reference
+# FIXED_EVAL_DAYS by this name. Points to the same VALIDATION_DAYS list.
+FIXED_EVAL_DAYS = VALIDATION_DAYS
+
+# Index of the (validation) negative-RRP day within VALIDATION_DAYS
+# (0-based). Used to exclude it from best.pt selection and convergence
+# detection for the same reason the test-set stress-test day is excluded
+# from the final Table 3 pooled mean — see evaluate() docstring.
+# NOTE: this validation-set negative-RRP day (2024-01-21) is expected to
+# have a SMALLER profit-magnitude outlier than the test set's stress-test
+# day (2024-02-13, min=-$1000/MWh market floor) since it wasn't
+# deliberately selected for extremity — but the same pooling risk applies
+# in principle, so it's excluded here too for consistency.
 STRESS_TEST_DAY_INDEX = 2
 
 
@@ -294,10 +321,10 @@ def evaluate(
     episode_num: int,
 ) -> dict:
     """
-    Evaluate the deterministic policy on fixed held-out days.
+    Evaluate the deterministic policy on fixed VALIDATION days.
 
-    Runs the policy on each of the FIXED_EVAL_DAYS in sequence, then
-    on (n_episodes - len(FIXED_EVAL_DAYS)) additional random days if
+    Runs the policy on each of the VALIDATION_DAYS in sequence, then
+    on (n_episodes - len(VALIDATION_DAYS)) additional random days if
     n_episodes > 5. With n_episodes=5 this evaluates exactly the 5
     fixed days — making every checkpoint directly comparable.
 
@@ -305,17 +332,23 @@ def evaluate(
     in random-day evaluation, making convergence visible and checkpoint
     comparison meaningful (§4.3.3, convergence detection).
 
-    Per-day results are logged individually for the thesis case study
-    table (Table 3), in addition to the aggregate mean.
+    IMPORTANT — this function selects best.pt for TRAINING purposes
+    only. VALIDATION_DAYS is deliberately DISTINCT from evaluate.py's
+    CASE_STUDIES (the final reported test set) — see the
+    "Validation/test split" note above VALIDATION_DAYS for why. Do NOT
+    treat the per-day results logged here as the thesis/paper's final
+    reported numbers; those come only from evaluate.py run on the
+    already-trained, already-selected best.pt checkpoint.
 
     Stress-test day exclusion
     --------------------------
-    FIXED_EVAL_DAYS[STRESS_TEST_DAY_INDEX] (2024-02-13, extreme negative
-    RRP) has a profit magnitude 20-500x larger than the other 4 days.
-    Pooling it into "mean_net_profit" means one day's outcome — not the
-    agent's typical performance — drives best.pt selection and
-    convergence detection, and can flip the ranking between checkpoints
-    or agents depending on which direction that one day happened to go.
+    VALIDATION_DAYS[STRESS_TEST_DAY_INDEX] (2024-01-21, negative RRP)
+    can have a profit magnitude substantially larger than the other 4
+    validation days. Pooling it into "mean_net_profit" means one day's
+    outcome — not the agent's typical performance — drives best.pt
+    selection and convergence detection, and can flip the ranking
+    between checkpoints depending on which direction that one day
+    happened to go.
 
     "mean_net_profit_normal" excludes it and is the value best.pt
     selection and convergence detection should use going forward.
@@ -407,7 +440,7 @@ def evaluate(
         "std_net_profit_normal":   float(np.std(normal_profits)),
         "mean_participation_rate": float(np.mean(participation_rates)),
         "mean_doe_violation_kw":   float(np.mean(doe_violation_totals)),
-        "per_day":                 per_day_results,   # for thesis Table 3
+        "per_day":                 per_day_results,   # validation-only diagnostic, NOT Table 3 data
     }
 
 
@@ -678,7 +711,8 @@ def train(cfg: dict, resume_path: str = None, no_eval: bool = False, start_episo
                 f"participation={eval_metrics['mean_participation_rate']:.3f} | "
                 f"doe_viol={eval_metrics['mean_doe_violation_kw']:.1f}kW"
             )
-            # Log per fixed day for thesis Table 3
+            # Log per validation day (diagnostic only — final Table 3 numbers
+            # come exclusively from evaluate.py on the selected best.pt)
             for d in eval_metrics.get("per_day", []):
                 stress_tag = " [STRESS TEST]" if d.get("is_stress_test") else ""
                 logger.info(

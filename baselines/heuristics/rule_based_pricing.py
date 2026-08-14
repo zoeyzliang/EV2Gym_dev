@@ -72,6 +72,17 @@ class RuleBasedPricingBaseline:
         spot_price_norm = float(node_feats[0, 6])
         spot_price = spot_price_norm * env.cfg.rrp_clip_high   # $/MWh
 
+        # Equipment cap per hub: feature [5], kW — genuinely heterogeneous
+        # across the 21 hubs (real OpenChargeMap charger counts, see
+        # spatial_graph.py HubConfig.p_max_kw). Previously hardcoded to
+        # 100.0 kW uniformly, which unlike GreedyDispatchBaseline (which
+        # already read this correctly) meant this baseline could propose
+        # dispatch magnitudes exceeding a hub's true cap, silently relying
+        # on the environment's clip rather than reflecting the baseline's
+        # own policy — an unfair comparison point against agents that do
+        # see the true cap.
+        equipment_caps = node_feats[:, 5]  # (H,), kW
+
         # Incentive price: fraction of spot price
         incentive_price = float(np.clip(
             self.price_fraction * max(spot_price, 0.0) / 1000.0,  # $/MWh → $/kWh
@@ -81,9 +92,9 @@ class RuleBasedPricingBaseline:
 
         # Signed dispatch: discharge at full cap when RRP > incentive price
         if spot_price > incentive_price * 1000.0:  # compare $/MWh
-            dispatch = np.full(self.n_hubs, self.dispatch_fraction * 100.0, dtype=np.float32)  # kW
+            dispatch = (self.dispatch_fraction * equipment_caps).astype(np.float32)   # kW
         else:
-            dispatch = np.full(self.n_hubs, -self.dispatch_fraction * 100.0, dtype=np.float32)  # charge
+            dispatch = (-self.dispatch_fraction * equipment_caps).astype(np.float32)  # charge
         action = np.append(dispatch, incentive_price).astype(np.float32)
         return action
 

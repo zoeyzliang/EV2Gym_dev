@@ -87,6 +87,23 @@ def build_flat_networks(obs_dim: int, action_dim: int,
             """
             Forward pass handling both single obs (H*9,) and batched (B, H*9).
             Always returns action (H+1,) for single, (B, H+1) for batch.
+
+            Equipment cap fix
+            ------------------
+            Hub equipment caps are genuinely heterogeneous (derived from
+            real OpenChargeMap charger counts per station — see
+            spatial_graph.py HubConfig.p_max_kw), NOT a uniform 100 kW.
+            SAC-GNN and SAC-GCN both read the true per-hub cap from node
+            feature [5] via the graph encoder. This flat MLP previously
+            hardcoded 100.0 kW for every hub, which is a genuine
+            confound for the graph-vs-no-graph ablation (RQ3): SAC-Flat
+            would waste tanh output range on values later clipped away
+            by the environment's per-hub cap, for reasons unrelated to
+            the presence/absence of graph structure. Fixed by reading
+            the same feature [5] directly from the flat obs vector,
+            which is trivially available without any graph structure —
+            using it does not reintroduce graph information, it only
+            removes an unrelated implementation bug.
             """
             import torch, math
             # Ensure 2D: (B, obs_dim)
@@ -94,6 +111,11 @@ def build_flat_networks(obs_dim: int, action_dim: int,
             if single:
                 obs = obs.unsqueeze(0)   # (1, obs_dim)
             B = obs.shape[0]
+
+            # Extract true per-hub equipment cap (kW) from node feature [5]
+            # of the flat obs. Layout: [hub0(9 feats), hub1(9 feats), ...]
+            node_feats = obs.view(B, self.n_hubs, 9)
+            equipment_caps = node_feats[:, :, 5]   # (B, n_hubs), kW, unnormalised
 
             h = self.shared(obs)   # (B, hidden_dim)
 
@@ -112,7 +134,7 @@ def build_flat_networks(obs_dim: int, action_dim: int,
             price_mid = self.price_max / 2
 
             if deterministic:
-                dispatch_kw = 100.0 * torch.tanh(dispatch_mean)   # (B, n_hubs)
+                dispatch_kw = equipment_caps * torch.tanh(dispatch_mean)   # (B, n_hubs)
                 price = price_mid + price_mid * torch.tanh(price_mean)  # (B,)
                 action = torch.cat([dispatch_kw, price.unsqueeze(1)], dim=1)  # (B, H+1)
                 if single:
@@ -123,7 +145,7 @@ def build_flat_networks(obs_dim: int, action_dim: int,
             dispatch_eps = torch.randn_like(dispatch_mean)
             dispatch_pre = dispatch_mean + dispatch_log_std.exp() * dispatch_eps
             tanh_d       = torch.tanh(dispatch_pre)
-            dispatch_kw  = 100.0 * tanh_d   # (B, n_hubs)
+            dispatch_kw  = equipment_caps * tanh_d   # (B, n_hubs)
 
             price_eps  = torch.randn_like(price_mean)
             price_pre  = price_mean + price_log_std.exp() * price_eps
@@ -132,12 +154,15 @@ def build_flat_networks(obs_dim: int, action_dim: int,
 
             action = torch.cat([dispatch_kw, price.unsqueeze(1)], dim=1)  # (B, H+1)
 
-            # Log prob with tanh correction
+            # Log prob with tanh correction. The Jacobian term for a
+            # per-hub scale factor is log(equipment_caps[hub]) rather
+            # than a single constant log(100.0) — each hub now has its
+            # own scale.
             dispatch_log_prob = (
                 -0.5 * dispatch_eps ** 2 - dispatch_log_std
                 - 0.5 * math.log(2 * math.pi)
                 - torch.log(1 - tanh_d ** 2 + 1e-6)
-                - math.log(100.0)
+                - torch.log(equipment_caps.clamp(min=1e-3))
             ).sum(dim=-1)   # (B,)
 
             price_log_prob = (

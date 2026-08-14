@@ -285,8 +285,37 @@ class NEMDOEEnv(gym.Env):
               Current training episode — passed to curriculum sampler.
           "total_episodes" : int
               Total training episodes — passed to curriculum sampler.
+
+        Seeding
+        -------
+        If `seed` is provided, it genuinely reseeds this environment's
+        actual stochastic streams — both self._rng (hub state init, DOE
+        noise, arrivals/departures) AND self.participation_model.rng
+        (EV owner response draws). This matters for paired evaluation:
+        calling reset(seed=k) for two different agents on the same case
+        study day produces IDENTICAL hub states, DOE realisations, and
+        participation draws for both agents, enabling a paired
+        statistical comparison (e.g. paired t-test / Wilcoxon) rather
+        than an unpaired one confounded by arbitrary evaluation order.
+
+        Previously this only called super().reset(seed=seed), which
+        reseeds gymnasium's self.np_random — a Generator this
+        environment's code never actually reads from. self._rng and
+        participation_model.rng are separate objects created once at
+        __init__ and, without this fix, kept advancing across every
+        reset() call regardless of the seed argument — meaning two
+        agents evaluated sequentially on "the same" case study day were
+        silently drawing from different, order-dependent points in the
+        random stream.
         """
         super().reset(seed=seed)
+
+        if seed is not None:
+            self._rng = np.random.default_rng(seed)
+            # ParticipationModel doesn't expose a public reseed method
+            # (its rng may be shared/injected — see participation_model.py
+            # __init__), so reseed its internal Generator directly here.
+            self.participation_model.rng = np.random.default_rng(seed)
 
         opts = options or {}
         self._episode_df = self.price_loader.sample_episode(
