@@ -336,7 +336,15 @@ class SACFlatAgent:
         batch = self.buffer.sample(self.batch_size)
         # Alpha floor raised from 0.01 to 0.05 — see agent.py store_transition
         # docstring for rationale (more recovery capacity after bad updates)
-        alpha = self.log_alpha.exp().detach().clamp(min=0.05)
+        # Alpha ceiling added (max=2.0) after observing this exact agent's
+        # alpha explode to 13.09 by episode 100, with DOE violations never
+        # reaching zero even at episode 1500 (238,126 kW) — see agent.py
+        # store_transition docstring / _gradient_update comment for the
+        # full root-cause explanation (no graph structure -> no spatial
+        # credit assignment -> some action dims collapse -> extremely
+        # negative log_probs -> alpha auto-tuner runs away trying to
+        # compensate, with no natural ceiling to stop it).
+        alpha = self.log_alpha.exp().detach().clamp(min=0.05, max=2.0)
 
         obs_t  = torch.tensor(batch.obs,      dtype=torch.float32, device=self.device)
         act_t  = torch.tensor(batch.actions,  dtype=torch.float32, device=self.device)

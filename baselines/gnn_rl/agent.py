@@ -420,12 +420,23 @@ class SACGNNAgent:
         import torch
         import torch.nn.functional as F
 
-        # Alpha floor: prevent entropy collapse below 0.05 (raised from 0.01
-        # after observing policy collapses that didn't recover — a higher
-        # floor gives the policy more room to keep exploring and escape a
-        # poor region of action space after a bad update, rather than being
-        # nearly deterministic with almost no ability to recover).
-        alpha = self.log_alpha.exp().detach().clamp(min=0.05)
+        # Alpha floor 0.05 (prevents entropy collapse) AND ceiling 2.0
+        # (prevents runaway growth). The ceiling was added after observing
+        # SACFlatAgent's alpha explode to 13.09 by episode 100, with DOE
+        # violations never reaching zero even at episode 1500 (238,126 kW).
+        # Root cause: without a graph structure to spatially correlate
+        # gradient signal across hubs, some action dimensions can collapse
+        # toward log_std_min while others don't, producing extremely
+        # negative log_probs for the collapsed dims. The alpha auto-tuner
+        # (alpha_loss = -log_alpha * (log_prob + target_entropy)) then
+        # keeps increasing alpha trying to compensate, but since alpha
+        # only scales the entropy BONUS in the actor loss rather than
+        # directly un-collapsing those dimensions, this becomes a runaway
+        # positive feedback loop with no natural ceiling. GAT/GCN rarely
+        # hit this because message passing gives more consistent gradient
+        # signal across hubs, but the ceiling is added here too for
+        # defense-in-depth since the same auto-tuner code path is shared.
+        alpha = self.log_alpha.exp().detach().clamp(min=0.05, max=2.0)
 
         # --- Convert batch to tensors (moved to self.device — GPU if available) ---
         obs_t      = torch.tensor(batch.obs,      dtype=torch.float32, device=self.device)
