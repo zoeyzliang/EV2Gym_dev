@@ -15,7 +15,13 @@ set -euo pipefail
 WORKDIR=/fs04/scratch2/fr57/zlia0072/ev2gym_training/EV2Gym_dev
 cd "$WORKDIR"
 
-source activate ev2gym
+# Robust conda activation for non-interactive SLURM batch shells.
+# "source activate ev2gym" (legacy syntax) intermittently fails on compute
+# nodes with "activate: No such file or directory" -- depends on an old
+# standalone activate script being reachable, which isn't guaranteed on
+# every compute node. Sourcing conda.sh directly avoids this.
+source /apps/anaconda/2024.02-1/etc/profile.d/conda.sh
+conda activate ev2gym
 
 python -c "import torch; print('CUDA:', torch.cuda.is_available())"
 

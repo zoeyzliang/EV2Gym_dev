@@ -428,6 +428,17 @@ def evaluate_case_study(
         n_zero_doe  = 0
 
         while not done:
+            if collect_actions:
+                # Capture node features BEFORE env.step() reassigns obs —
+                # this is the state the agent actually conditioned its
+                # action on. Using the post-step obs here was a bug: DOE
+                # limits update periodically (doe_update_every steps), so
+                # pairing an action with the NEXT step's DOE tightness
+                # (rather than the tightness the agent actually observed)
+                # silently shifted every recorded pair by one step,
+                # undermining the figure's core claim.
+                pre_step_node_feats = env.obs_to_node_features(obs)
+
             t0 = time.perf_counter()
             if needs_env:
                 action = agent.select_action(obs, env)
@@ -446,14 +457,15 @@ def evaluate_case_study(
             if collect_actions:
                 # Per-hub: normalised dispatch fraction in [-1, 1]
                 # (dispatch_kw / equipment_cap_kw) and DOE tightness
-                # in [0, 1] (1 = fully constrained, 0 = full headroom).
+                # in [0, 1] (1 = fully constrained, 0 = full headroom),
+                # both derived from the PRE-step observation captured
+                # above — the state the agent actually acted on.
                 # node feature layout: [0]=doe_import_norm,
                 # [1]=doe_export_norm, [5]=equipment_cap_kw (see
                 # nem_doe_env.py _build_observation).
-                node_feats = env.obs_to_node_features(obs)
-                equipment_caps = node_feats[:, 5]
-                doe_import_norm = node_feats[:, 0]
-                doe_export_norm = node_feats[:, 1]
+                equipment_caps = pre_step_node_feats[:, 5]
+                doe_import_norm = pre_step_node_feats[:, 0]
+                doe_export_norm = pre_step_node_feats[:, 1]
                 # Tightness: how little DOE headroom remains relative to
                 # equipment cap, averaged over both directions.
                 doe_headroom_frac = np.clip(
