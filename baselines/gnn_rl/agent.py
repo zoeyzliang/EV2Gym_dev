@@ -510,6 +510,21 @@ class SACGNNAgent:
         alpha_loss.backward()
         self.alpha_opt.step()
 
+        # Clamp the ACTUAL log_alpha parameter in-place, not just the
+        # local derived copy used a few lines above (self.log_alpha.exp()
+        # .detach().clamp(min=0.05, max=2.0)). That clamp never touched
+        # log_alpha itself, which alpha_opt.step() updates via gradient
+        # descent on alpha_loss above — so log_alpha could still drift
+        # unboundedly. This was confirmed as a real, active bug in
+        # SAC-Flat's training logs (alpha printing as exactly 0.0000 at
+        # the final episode, critic_loss exploding into the tens of
+        # millions, doe_viol never converging). SAC-GNN/GCN didn't
+        # exhibit this failure in practice, but share the identical
+        # code path and are fixed here too for defense-in-depth ahead
+        # of any future retraining.
+        with torch.no_grad():
+            self.log_alpha.clamp_(min=np.log(0.05), max=np.log(2.0))
+
         # --- Step 4: Soft update target critics ---
         self._soft_update(self.target_critic1, self.critic1)
         self._soft_update(self.target_critic2, self.critic2)

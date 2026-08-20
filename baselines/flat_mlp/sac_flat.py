@@ -416,6 +416,22 @@ class SACFlatAgent:
         self.alpha_opt.zero_grad(); alpha_loss.backward()
         self.alpha_opt.step()
 
+        # Clamp the ACTUAL log_alpha parameter in-place, not just a local
+        # derived copy. The earlier fix (alpha = self.log_alpha.exp()...
+        # .clamp(min=0.05, max=2.0), line ~372) only bounded a temporary
+        # variable used in a few loss terms — it never touched log_alpha
+        # itself, which is what alpha_opt.step() actually updates via
+        # gradient descent on alpha_loss above. Without this, log_alpha
+        # could still drift completely unboundedly (confirmed: training
+        # logs showed alpha printing as exactly 0.0000 at episode 1500,
+        # with critic_loss exploding from 6.3M to 58.5M over the final
+        # 150 episodes and doe_viol never dropping below ~10,000 kW —
+        # i.e. the entropy collapse this clamp was meant to prevent was
+        # still happening, just one level deeper than where the earlier
+        # fix was applied).
+        with torch.no_grad():
+            self.log_alpha.clamp_(min=np.log(0.05), max=np.log(2.0))
+
         # Soft update targets
         for t, o in zip(self.target_critic1.parameters(),
                         self.critic1.parameters()):
