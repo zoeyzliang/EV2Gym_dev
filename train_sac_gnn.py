@@ -157,6 +157,14 @@ def parse_args():
     parser.add_argument("--start_episode", type=int, default=None,
                         help="Episode to resume from (e.g. 1601). Inferred from checkpoint if not set.")
     parser.add_argument("--results_dir", type=str, default=None)
+    parser.add_argument(
+        "--lambda_conf", type=float, default=None,
+        help="Override EnvConfig.lambda_conformance (DOE violation penalty "
+             "weight, default 200.0). Added for hyperparameter sensitivity "
+             "analysis — trains the same agent/seed with a different DOE "
+             "penalty strength to test robustness of the reported results "
+             "to this choice, rather than relying on a single untested value.",
+    )
     parser.add_argument("--no_eval", action="store_true",
                         help="Skip evaluation runs (faster, less informative)")
     return parser.parse_args()
@@ -229,11 +237,19 @@ def make_env(cfg: dict, split: str = "train", seed: int = 42) -> NEMDOEEnv:
         seed=seed,
     )
 
+    env_config_kwargs = {}
+    if cfg.get("lambda_conf") is not None:
+        env_config_kwargs["lambda_conformance"] = cfg["lambda_conf"]
+        logger.info(
+            f"Overriding EnvConfig.lambda_conformance: "
+            f"{cfg['lambda_conf']} (default 200.0) — sensitivity analysis run"
+        )
+
     env = NEMDOEEnv(
         hub_configs=hub_configs,
         price_loader=loader,
         participation_model=model,
-        env_config=EnvConfig(),
+        env_config=EnvConfig(**env_config_kwargs),
         seed=seed,
     )
 
@@ -796,6 +812,7 @@ if __name__ == "__main__":
     # Auto-set results_dir based on agent if not explicitly set
     elif args.agent != "sac_gnn":
         cfg["results_dir"] = f"results/{args.agent}_real"
+    cfg["lambda_conf"] = args.lambda_conf
 
     # Set seeds for reproducibility
     np.random.seed(cfg["seed"])
