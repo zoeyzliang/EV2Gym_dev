@@ -413,6 +413,20 @@ def evaluate_case_study(
     total_steps_list = []
     inference_times_ms = []   # per-step wall-clock time for select_action()
     action_records = [] if collect_actions else None
+    # Reward decomposition — needed for hyperparameter sensitivity analysis
+    # (e.g. varying lambda_conformance / --lambda_conf). "profit" as
+    # currently reported is the raw shaped reward
+    # (r_wholesale - r_incentive - p_conformance), and p_conformance is
+    # DIRECTLY WEIGHTED BY lambda_conf. Comparing raw "profit" across
+    # different lambda_conf values conflates the policy's actual arbitrage
+    # behaviour with an accounting convention that changes with the
+    # hyperparameter being tested — undermining the whole point of the
+    # sensitivity analysis. Decomposing into arbitrage_profit (lambda_conf-
+    # independent) and doe_penalty (shows the $ cost of violations
+    # directly) lets the trade-off actually be seen: does a smaller
+    # lambda_conf trade DOE compliance for higher arbitrage profit, or not?
+    arbitrage_profits = []
+    doe_penalties      = []
 
     date = case_study["date"]
 
@@ -426,6 +440,8 @@ def evaluate_case_study(
         ep_rho      = 0.0
         n_steps     = 0
         n_zero_doe  = 0
+        ep_arbitrage = 0.0
+        ep_penalty    = 0.0
 
         while not done:
             if collect_actions:
@@ -453,6 +469,15 @@ def evaluate_case_study(
             n_steps     += 1
             if sum(info.get("doe_violations_kw", [0.0])) == 0:
                 n_zero_doe += 1
+
+            # r_wholesale, r_incentive, p_conformance are exposed directly
+            # in info via **reward_components in nem_doe_env.py step().
+            # arbitrage_profit = r_wholesale - r_incentive is exactly the
+            # lambda_conf-independent portion of the reward; p_conformance
+            # is the lambda_conf-weighted DOE penalty term subtracted to
+            # form the total reward.
+            ep_arbitrage += info.get("r_wholesale", 0.0) - info.get("r_incentive", 0.0)
+            ep_penalty    += info.get("p_conformance", 0.0)
 
             if collect_actions:
                 # Per-hub: normalised dispatch fraction in [-1, 1]
@@ -485,6 +510,8 @@ def evaluate_case_study(
         participation.append(ep_rho / n_steps if n_steps > 0 else 0.0)
         doe_compliant_steps.append(n_zero_doe / n_steps if n_steps > 0 else 0.0)
         total_steps_list.append(n_steps)
+        arbitrage_profits.append(ep_arbitrage)
+        doe_penalties.append(ep_penalty)
 
     return {
         "agent":              agent_name,
@@ -496,6 +523,18 @@ def evaluate_case_study(
         # Primary metric
         "mean_profit":        float(np.mean(profits)),
         "std_profit":         float(np.std(profits)),
+        # Reward decomposition — for hyperparameter sensitivity analysis
+        # (see accumulator comment above). arbitrage_profit is
+        # lambda_conf-independent; doe_penalty is the actual $ cost paid
+        # for DOE violations that (mean_profit) already has subtracted.
+        # mean_profit ≈ mean_arbitrage_profit - mean_doe_penalty (not
+        # exact equality since DOE compliance and profit are correlated
+        # per-step, not simply additive in expectation across runs, but
+        # this identity holds closely and can be used as a sanity check).
+        "mean_arbitrage_profit": float(np.mean(arbitrage_profits)),
+        "std_arbitrage_profit":  float(np.std(arbitrage_profits)),
+        "mean_doe_penalty":       float(np.mean(doe_penalties)),
+        "std_doe_penalty":        float(np.std(doe_penalties)),
         # DOE compliance
         "mean_doe_viol_kw":   float(np.mean(doe_violations)),
         "std_doe_viol_kw":    float(np.std(doe_violations)),
