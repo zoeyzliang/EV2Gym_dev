@@ -382,17 +382,39 @@ class NEMDOEEnv(gym.Env):
             for i in range(self.H)
         ], dtype=np.float64)
 
-        # DOE violation: how much of raw action exceeded DOE limits
-        # Used only for penalty; agent observes DOE in state so can avoid this.
+        # DOE violation: how much of raw action exceeded DOE limits.
+        # Used for both the reward penalty AND the reported DOE compliance
+        # statistic — this MUST match Stage 1's clipping logic exactly.
+        #
+        # Bug fixed here: this previously used min(doe_import_w, doe_export_w)
+        # as a single symmetric threshold for ALL dispatch directions,
+        # instead of the direction-specific limit Stage 1 actually clips
+        # against (export limit for discharge, import limit for charge).
+        # Since doe_export_mean_w (40kW default) < doe_import_mean_w
+        # (50kW default), this under-estimated the true allowance for
+        # CHARGE actions by ~10kW on average — any agent charging near
+        # its correct, larger import limit was falsely flagged as
+        # violating a tighter constraint that was never the real one.
+        #
+        # This was traced from OracleMPC/RuleBasedPricing showing exactly
+        # 0.0% DOE compliance in evaluation despite containing explicit
+        # DOE-respecting logic in their source (OracleMPC deliberately
+        # charges up to min(doe_import_kw, equipment_caps) — precisely
+        # the behaviour that tripped the old buggy metric). SAC-GNN/GCN
+        # showed high "compliance" only because they were TRAINED against
+        # this same buggy penalty for 1500 episodes and learned to stay
+        # conservative enough to avoid tripping it — i.e. they learned to
+        # satisfy an artificially tight constraint, not the true DOE
+        # envelope, and likely left arbitrage profit on the table by
+        # under-charging relative to their true (larger) import allowance.
+        directional_doe_limit_kw = np.array([
+            (self._hub_states[i].doe_export_w / 1000.0) if raw_dispatch_kw[i] >= 0
+            else (self._hub_states[i].doe_import_w / 1000.0)
+            for i in range(self.H)
+        ])
         doe_violations_kw = np.maximum(
             0.0,
-            np.abs(raw_dispatch_kw) - np.array([
-                min(
-                    self._hub_states[i].doe_import_w / 1000.0,
-                    self._hub_states[i].doe_export_w / 1000.0,
-                )
-                for i in range(self.H)
-            ])
+            np.abs(raw_dispatch_kw) - directional_doe_limit_kw
         )
 
         # --- Participation draw (hidden from agent) ---
