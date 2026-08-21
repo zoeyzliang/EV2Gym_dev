@@ -120,6 +120,10 @@ ZONE_REGISTRY = {
         # greater_melbourne below for why per-zone values were needed).
         "coord_normalise_km": 8.0,
         "proximity_radius_km": 10.0,
+        # Matches the former module-level MAX_EDGE_DISTANCE_KM default
+        # exactly — see greater_melbourne below for why this needed to
+        # become per-zone.
+        "max_edge_distance_km": 6.0,
     },
     "greater_melbourne": {
         # Scaling experiment (RQ3/RQ4 at larger hub count) — tests whether
@@ -156,6 +160,21 @@ ZONE_REGISTRY = {
         # near the edge of the zone, producing missing/incorrect
         # road-distance data for those hubs.
         "proximity_radius_km": 14.0,
+        # Discovered necessary after the first real build: with the
+        # inner_melbourne-inherited 6.0km threshold, the resulting
+        # 32-hub graph was disconnected (graph_summary()['is_connected']
+        # == False). This zone's hubs are naturally more spread out —
+        # mean pairwise distance 8.46km vs inner_melbourne's 5.93km,
+        # max pairwise distance 21.94km vs 14.10km — so a fixed 6.0km
+        # threshold tuned for the tighter inner-city zone leaves some
+        # hubs with no edge to the rest of the graph, which breaks
+        # GAT/GCN message passing for those nodes entirely. Set to
+        # 10.0km as a starting point (~1.4-1.6x inner_melbourne's
+        # threshold, roughly matching the increase in both mean and max
+        # pairwise distance). VERIFY graph_summary()['is_connected'] is
+        # True after rebuilding with this value — if still False,
+        # increase further and rebuild again.
+        "max_edge_distance_km": 10.0,
     },
 }
 
@@ -316,7 +335,7 @@ class HubGraphBuilder:
     def __init__(
         self,
         zone: str = "inner_melbourne",
-        max_edge_distance_km: float = MAX_EDGE_DISTANCE_KM,
+        max_edge_distance_km: Optional[float] = None,
         use_synthetic: bool = False,
         ocm_api_key: Optional[str] = None,
         rng: Optional[np.random.Generator] = None,
@@ -327,7 +346,17 @@ class HubGraphBuilder:
 
         self.zone_cfg = ZONE_REGISTRY[zone]
         self.zone_name = zone
-        self.max_edge_distance_km = max_edge_distance_km
+        # Per-zone default, still overridable by an explicit caller-passed
+        # value. This became necessary after discovering that a fixed
+        # 6.0km threshold (tuned for inner_melbourne's tighter hub
+        # spacing) produced a DISCONNECTED graph for greater_melbourne,
+        # whose hubs are naturally more spread out — see ZONE_REGISTRY's
+        # greater_melbourne entry for the full explanation and the
+        # observed distance statistics that motivated this.
+        self.max_edge_distance_km = (
+            max_edge_distance_km if max_edge_distance_km is not None
+            else self.zone_cfg.get("max_edge_distance_km", MAX_EDGE_DISTANCE_KM)
+        )
         self.use_synthetic = use_synthetic
         self.ocm_api_key = ocm_api_key
         self._rng = rng if rng is not None else np.random.default_rng(42)
