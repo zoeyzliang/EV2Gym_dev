@@ -158,6 +158,18 @@ def parse_args():
                         help="Episode to resume from (e.g. 1601). Inferred from checkpoint if not set.")
     parser.add_argument("--results_dir", type=str, default=None)
     parser.add_argument(
+        "--zone", type=str, default=None,
+        help="Zone key from ZONE_REGISTRY (nem_env/spatial_graph.py). "
+             "Overrides EnvConfig's default graph_path "
+             "(data/graphs/inner_melbourne.pkl) to "
+             "data/graphs/<zone>.pkl instead. Added for the hub-count "
+             "scaling experiment — e.g. --zone greater_melbourne trains "
+             "on the 32-hub graph instead of the default 21-hub "
+             "inner_melbourne graph, with all other hyperparameters "
+             "identical, to test whether SAC-GNN's advantage over "
+             "SAC-GCN grows, shrinks, or stays flat at larger hub count.",
+    )
+    parser.add_argument(
         "--lambda_conf", type=float, default=None,
         help="Override EnvConfig.lambda_conformance (DOE violation penalty "
              "weight, default 200.0). Added for hyperparameter sensitivity "
@@ -813,6 +825,9 @@ if __name__ == "__main__":
     elif args.agent != "sac_gnn":
         cfg["results_dir"] = f"results/{args.agent}_real"
     cfg["lambda_conf"] = args.lambda_conf
+    if args.zone is not None:
+        cfg["graph_path"] = f"data/graphs/{args.zone}.pkl"
+        logger.info(f"Overriding graph_path for --zone={args.zone}: {cfg['graph_path']}")
 
     # Set seeds for reproducibility
     np.random.seed(cfg["seed"])
