@@ -114,7 +114,49 @@ ZONE_REGISTRY = {
         # We filter for DC fast chargers only (bidirectional V2G capable)
         "ocm_connection_types": [25, 33, 2],
         "ocm_min_kw": 7.0,   # minimum charger power to qualify (kW)
-    }
+        # Matches the former module-level COORD_NORMALISE_KM / PROXIMITY_
+        # RADIUS_KM defaults exactly — inner_melbourne's built graph is
+        # byte-for-byte unaffected by making these per-zone (see
+        # greater_melbourne below for why per-zone values were needed).
+        "coord_normalise_km": 8.0,
+        "proximity_radius_km": 10.0,
+    },
+    "greater_melbourne": {
+        # Scaling experiment (RQ3/RQ4 at larger hub count) — tests whether
+        # SAC-GNN's advantage over SAC-GCN grows, shrinks, or stays flat
+        # as hub count increases from 21 (inner_melbourne). Every parameter
+        # below is IDENTICAL to inner_melbourne except radius/bbox and the
+        # two per-zone constants below, so hub count is the only intended
+        # difference between the two zones' resulting graphs.
+        #
+        # Bbox radius chosen by area scaling: target ~50 hubs from 21 at
+        # inner_melbourne's 8km radius implies ~12.3km (sqrt(50/21) x 8),
+        # rounded to 12.0km here. This is a rough estimate assuming
+        # uniform charging-station density across the wider region — real
+        # OCM data will not scale linearly with area (inner suburbs are
+        # denser than outer ones), so the actual hub count returned by
+        # HubGraphBuilder.build() may differ substantially from 50. Check
+        # graph_summary()['n_hubs'] after building; if it's not reasonably
+        # close to 50, adjust radius_km / ocm_bbox and rebuild.
+        "display_name": "Greater Melbourne Scaling Zone",
+        "centroid_lat": -37.8136,
+        "centroid_lon": 144.9631,
+        "radius_km": 12.0,
+        "ocm_bbox": (-37.9111, -37.7161, 144.8656, 145.0606),
+        "ocm_connection_types": [25, 33, 2],
+        "ocm_min_kw": 7.0,
+        # Must match radius_km (12.0), not the old inner_melbourne-only
+        # global default of 8.0 — otherwise hubs beyond 8km from centroid
+        # would have loc_x/loc_y clipped to +/-1.0, destroying spatial
+        # differentiation for a meaningful fraction of the 50-hub zone.
+        "coord_normalise_km": 12.0,
+        # Must exceed radius_km with margin, not the old global default
+        # of 10.0 (which is SMALLER than this zone's own 12km radius) —
+        # otherwise OSMnx's road-network download wouldn't cover hubs
+        # near the edge of the zone, producing missing/incorrect
+        # road-distance data for those hubs.
+        "proximity_radius_km": 14.0,
+    },
 }
 
 # Graph construction parameters — treated as sensitivity parameters in §4.3.4
@@ -548,11 +590,11 @@ class HubGraphBuilder:
             logger.info(
                 f"  Downloading OSMnx road network "
                 f"(centre: {cfg['centroid_lat']:.4f}, {cfg['centroid_lon']:.4f}, "
-                f"radius: {PROXIMITY_RADIUS_KM} km)..."
+                f"radius: {cfg['proximity_radius_km']} km)..."
             )
             G = ox.graph_from_point(
                 (cfg["centroid_lat"], cfg["centroid_lon"]),
-                dist=PROXIMITY_RADIUS_KM * 1000,  # metres
+                dist=cfg["proximity_radius_km"] * 1000,  # metres
                 network_type="drive",
                 simplify=True,
             )
@@ -678,7 +720,7 @@ class HubGraphBuilder:
         Convert raw hub dicts to HubConfig objects.
 
         loc_x, loc_y are normalised positions relative to zone centroid:
-            loc = local_xy_km / COORD_NORMALISE_KM
+            loc = local_xy_km / cfg["coord_normalise_km"]
             ∈ [-1, 1] for hubs within the zone radius
 
         distance_km is the road-network distance from the zone centroid
@@ -692,9 +734,13 @@ class HubGraphBuilder:
         for i, hub in enumerate(hubs):
             x_km, y_km = latlon_to_local_xy(hub["lat"], hub["lon"], ref_lat, ref_lon)
 
-            # Normalise to [-1, 1] using zone radius
-            loc_x = float(np.clip(x_km / COORD_NORMALISE_KM, -1.0, 1.0))
-            loc_y = float(np.clip(y_km / COORD_NORMALISE_KM, -1.0, 1.0))
+            # Normalise to [-1, 1] using this zone's own radius (see
+            # ZONE_REGISTRY per-zone coord_normalise_km — using a fixed
+            # global here would clip/saturate loc_x, loc_y for any zone
+            # with a radius larger than the global default, destroying
+            # spatial differentiation for outer hubs).
+            loc_x = float(np.clip(x_km / cfg["coord_normalise_km"], -1.0, 1.0))
+            loc_y = float(np.clip(y_km / cfg["coord_normalise_km"], -1.0, 1.0))
 
             # Distance from centroid = proxy for residential travel cost d_i
             distance_from_centroid_km = math.sqrt(x_km**2 + y_km**2)
