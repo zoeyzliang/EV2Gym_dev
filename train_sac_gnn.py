@@ -101,6 +101,17 @@ DEFAULT_CONFIG = {
     "beta_1":  0.008,
     "beta_2": -0.20,
     "beta_3":  1.50,
+    # Battery degradation cost, $/kWh (participation_model.compute_gamma()
+    # default; see participation_model.py module docstring).
+    # NAMED DISTINCTLY from "gamma" below (which is the SAC discount
+    # factor) to avoid a silent collision — DO NOT rename to "gamma".
+    # None => ParticipationModel falls back to its own DEFAULT_GAMMA.
+    "participation_gamma": None,
+    # Domain randomization over beta_1/beta_3/participation_gamma per
+    # episode (see EnvConfig docstring in nem_doe_env.py). Off by default
+    # to preserve exact reproducibility of prior results.
+    "randomize_participation": False,
+    "participation_scale_range": None,  # e.g. (0.5, 1.5); None => EnvConfig default
 
     # SAC hyperparameters
     "gamma": 0.99,
@@ -177,6 +188,30 @@ def parse_args():
              "penalty strength to test robustness of the reported results "
              "to this choice, rather than relying on a single untested value.",
     )
+    parser.add_argument(
+        "--participation_gamma", type=float, default=None,
+        help="Override the battery degradation cost ($/kWh) used by the "
+             "participation model. NOT the SAC discount factor (that's "
+             "--gamma is not exposed here; see DEFAULT_CONFIG['gamma']). "
+             "Defaults to participation_model.DEFAULT_GAMMA (~0.14, "
+             "Hematiboroujeni et al. 2026 reference case) if unset.",
+    )
+    parser.add_argument(
+        "--randomize_participation", action="store_true",
+        help="Enable EnvConfig.randomize_participation_params — resample "
+             "beta_1, beta_3, and participation_gamma each episode from a "
+             "multiplicative range around their defaults, for policy "
+             "robustness to participation-model misspecification. Off by "
+             "default (fixed curve, exact reproducibility of prior runs).",
+    )
+    parser.add_argument(
+        "--participation_scale_range", type=float, nargs=2, default=None,
+        metavar=("LOW", "HIGH"),
+        help="Multiplicative jitter bounds for --randomize_participation, "
+             "e.g. --participation_scale_range 0.5 1.5. Only used if "
+             "--randomize_participation is also set. Defaults to "
+             "EnvConfig.participation_param_scale_range (0.5, 1.5) if unset.",
+    )
     parser.add_argument("--no_eval", action="store_true",
                         help="Skip evaluation runs (faster, less informative)")
     return parser.parse_args()
@@ -246,6 +281,8 @@ def make_env(cfg: dict, split: str = "train", seed: int = 42) -> NEMDOEEnv:
             "beta_2": cfg["beta_2"],
             "beta_3": cfg["beta_3"],
         },
+        gamma=cfg.get("participation_gamma"),   # None -> DEFAULT_GAMMA. NOT
+        # cfg["gamma"] — that key is the unrelated SAC discount factor.
         seed=seed,
     )
 
@@ -255,6 +292,22 @@ def make_env(cfg: dict, split: str = "train", seed: int = 42) -> NEMDOEEnv:
         logger.info(
             f"Overriding EnvConfig.lambda_conformance: "
             f"{cfg['lambda_conf']} (default 200.0) — sensitivity analysis run"
+        )
+    if cfg.get("randomize_participation") and split == "train":
+        # Deliberately train-split-only: eval_env (fixed case-study days,
+        # drives checkpoint selection / convergence detection / reported
+        # results) must stay under a known, fixed participation curve —
+        # randomizing it too would make "best checkpoint" and Table 3
+        # numbers uninterpretable (comparing against a moving target).
+        env_config_kwargs["randomize_participation_params"] = True
+        if cfg.get("participation_scale_range") is not None:
+            env_config_kwargs["participation_param_scale_range"] = (
+                cfg["participation_scale_range"]
+            )
+        logger.info(
+            "EnvConfig.randomize_participation_params=True (train split only) "
+            "— beta_1/beta_3/participation gamma resampled each episode "
+            f"(scale range: {cfg.get('participation_scale_range', '(0.5, 1.5) default')})"
         )
 
     env = NEMDOEEnv(
@@ -841,6 +894,11 @@ if __name__ == "__main__":
     if args.zone is not None:
         cfg["graph_path"] = f"data/graphs/{args.zone}.pkl"
         logger.info(f"Overriding graph_path for --zone={args.zone}: {cfg['graph_path']}")
+    if args.participation_gamma is not None:
+        cfg["participation_gamma"] = args.participation_gamma
+    cfg["randomize_participation"] = args.randomize_participation
+    if args.participation_scale_range is not None:
+        cfg["participation_scale_range"] = tuple(args.participation_scale_range)
 
     # Set seeds for reproducibility
     np.random.seed(cfg["seed"])
