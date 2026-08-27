@@ -77,7 +77,12 @@ from dataclasses import dataclass
 from typing import Optional
 
 from .aemo_price_loader import PriceLoader
-from .participation_model import ParticipationModel, HubParticipationState
+from .participation_model import (
+    ParticipationModel,
+    HubParticipationState,
+    DEFAULT_BETAS,
+    DEFAULT_GAMMA,
+)
 from .spatial_graph import HubConfig
 
 
@@ -118,6 +123,36 @@ class EnvConfig:
         Penalty weight per kW of DOE violation (λ_conf = 200 per master summary).
     price_min, price_max : float
         Incentive price action bounds ($/kWh).
+
+    Participation-model domain randomization
+    -----------------------------------------
+    randomize_participation_params : bool
+        If True, beta_1 (price sensitivity), beta_3 (SoC sensitivity) and
+        gamma (degradation cost) are re-sampled at the start of every
+        episode from a multiplicative range around their point-estimate
+        defaults (participation_model.DEFAULT_BETAS / DEFAULT_GAMMA),
+        rather than held fixed for the whole training run. beta_0
+        (intercept) and beta_2 (distance penalty) are NOT randomized —
+        they are treated as more structural/geographic than behavioral,
+        whereas beta_1, beta_3 and gamma are exactly the parameters the
+        participation_model.py module docstring flags as reasoned
+        assumptions with no empirical calibration available in the
+        literature (see thesis discussion — Hematiboroujeni et al. 2026;
+        Latinopoulos et al. 2021). Default False preserves exact prior
+        behaviour (fixed curve) for reproducibility of existing results
+        and for paired evaluation runs, where a fixed, known participation
+        model is usually what you want to hold constant while comparing
+        agents. Enable for training runs intended to test/improve policy
+        robustness to participation-model misspecification (sim-to-real
+        domain randomization); the realised per-episode values are
+        returned in reset()'s info dict for logging.
+    participation_param_scale_range : tuple(float, float)
+        Multiplicative jitter bounds applied to beta_1, beta_3, gamma
+        independently each episode, e.g. (0.5, 1.5) samples each
+        parameter uniformly in [0.5x, 1.5x] its default point estimate.
+        This is a reasoned envelope, not a fitted uncertainty range —
+        no empirical basis exists to calibrate it more precisely (see
+        participation_model.py module docstring).
     """
     # DOE dynamics
     doe_update_every: int = 6              # steps between DNSP updates (~30 min)
@@ -160,6 +195,10 @@ class EnvConfig:
     rrp_clip_low: float = -1_000.0        # NEM floor $/MWh
     rrp_clip_high: float = 20_300.0       # NEM price cap $/MWh 2025-26
     doe_normalise_by_w: float = 100_000.0 # 100 kW reference for normalisation
+
+    # Participation-model domain randomization (see docstring above)
+    randomize_participation_params: bool = False
+    participation_param_scale_range: tuple = (0.5, 1.5)
 
 
 # ---------------------------------------------------------------------------
@@ -327,8 +366,32 @@ class NEMDOEEnv(gym.Env):
         self._doe_step = 0
         self._hub_states = self._init_hub_states()
 
+        # --- Participation-model domain randomization (see EnvConfig docstring) ---
+        # Uses self._rng (not participation_model.rng) so the behavioral-
+        # parameter draw and the response draws stay on separate streams —
+        # consistent with the existing division of labour where self._rng
+        # governs "environment realisation" and participation_model.rng
+        # governs "owner response outcomes". Sampling here (after
+        # self._rng is (re)seeded above) means reset(seed=k) reproduces
+        # the same realised beta_1/beta_3/gamma for paired evaluation,
+        # exactly as it already does for hub states and DOE draws.
+        if self.cfg.randomize_participation_params:
+            lo, hi = self.cfg.participation_param_scale_range
+            self.participation_model.beta_1 = (
+                DEFAULT_BETAS["beta_1"] * self._rng.uniform(lo, hi)
+            )
+            self.participation_model.beta_3 = (
+                DEFAULT_BETAS["beta_3"] * self._rng.uniform(lo, hi)
+            )
+            self.participation_model.gamma = (
+                DEFAULT_GAMMA * self._rng.uniform(lo, hi)
+            )
+
         obs = self._build_observation()
-        return obs, {"step": 0}
+        return obs, {
+            "step": 0,
+            "participation_params": self.participation_model.beta_summary(),
+        }
 
     def step(self, action: np.ndarray) -> tuple:
         """
@@ -687,13 +750,22 @@ class NEMDOEEnv(gym.Env):
         return states
 
     def _get_participation_states(self) -> list:
-        """Convert HubState list to HubParticipationState list."""
+        """
+        Convert HubState list to HubParticipationState list.
+
+        doe_export_w and n_connected are passed through so the degradation
+        cost term in participation_model.py can compute an anticipated
+        per-EV discharge (DOE ceiling / connected EVs) — see
+        participation_model.py module docstring, "Degradation term".
+        """
         return [
             HubParticipationState(
                 hub_id=i,
                 n_enrolled=hub_state.n_enrolled,
                 distance_km=hub_cfg.distance_km,
                 mean_soc=hub_state.mean_soc,
+                doe_export_w=hub_state.doe_export_w,
+                n_connected=hub_state.n_connected,
             )
             for i, (hub_state, hub_cfg) in enumerate(
                 zip(self._hub_states, self.hub_configs)

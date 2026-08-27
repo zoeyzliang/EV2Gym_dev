@@ -399,7 +399,8 @@ def evaluate(
     n_random = max(0, n_episodes - len(FIXED_EVAL_DAYS))
 
     for i, date in enumerate(eval_dates):
-        obs, _ = eval_env.reset(options={"date": date})
+        obs, reset_info = eval_env.reset(options={"date": date})
+        realized_participation = reset_info.get("participation_params", {})
         done = False
         ep_reward = 0.0
         total_rho_hat = 0.0
@@ -424,6 +425,9 @@ def evaluate(
             "participation": mean_rho,
             "doe_viol_kw": total_doe_kw,
             "is_stress_test": (i == STRESS_TEST_DAY_INDEX),
+            "participation_beta_1": realized_participation.get("beta_1"),
+            "participation_beta_3": realized_participation.get("beta_3"),
+            "participation_gamma": realized_participation.get("gamma"),
         })
 
     # Pad with random days if needed
@@ -605,10 +609,11 @@ def train(cfg: dict, resume_path: str = None, no_eval: bool = False, start_episo
     # ── Main training loop ────────────────────────────────────────────
     for episode in range(ep_start, ep_end + 1):
 
-        obs, _ = train_env.reset(options={
+        obs, reset_info = train_env.reset(options={
             "episode": episode,
             "total_episodes": n_episodes,
         })
+        realized_participation = reset_info.get("participation_params", {})
         done = False
         ep_reward = 0.0
         ep_steps = 0
@@ -658,6 +663,14 @@ def train(cfg: dict, resume_path: str = None, no_eval: bool = False, start_episo
             "actor_loss": np.mean(ep_losses["actor_loss"]) if ep_losses["actor_loss"] else None,
             "alpha": np.mean(ep_losses["alpha"]) if ep_losses["alpha"] else None,
             "elapsed_min": (time.time() - start_time) / 60,
+            # Realized participation-model parameters for this episode.
+            # Fixed values every episode unless EnvConfig.randomize_
+            # participation_params=True; logged either way so the
+            # training_log.csv is self-documenting about which
+            # participation model each episode actually ran under.
+            "participation_beta_1": realized_participation.get("beta_1"),
+            "participation_beta_3": realized_participation.get("beta_3"),
+            "participation_gamma": realized_participation.get("gamma"),
         }
         training_log.append(log_entry)
 
