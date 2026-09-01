@@ -22,6 +22,7 @@ cd "$WORKDIR"
 # every compute node. Sourcing conda.sh directly avoids this.
 source /apps/anaconda/2024.02-1/etc/profile.d/conda.sh
 conda activate ev2gym
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 python -c "import torch; print('CUDA:', torch.cuda.is_available())"
 
