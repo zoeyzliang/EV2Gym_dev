@@ -180,7 +180,8 @@ plot_results_dict.pkl
 results_grouped.csv
 tests/
 
-MPC EVCS V2G - v2/training_report_*.html
+MPC EVCS V2G - v2/
+training_report_*.html
 data/graphs/*.pkl
 data/graphs/*_config.json
 data/nem_cache/
