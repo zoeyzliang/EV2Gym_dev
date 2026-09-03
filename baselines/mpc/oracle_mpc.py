@@ -98,10 +98,31 @@ class OracleMPCBaseline:
 
         for c in price_grid:
             # Expected participation per hub
+            #
+            # doe_export_ws/n_connecteds fix
+            # --------------------------------
+            # These two arguments were previously omitted entirely,
+            # silently defaulting to "no battery degradation cost"
+            # (see participation_model.py's _anticipated_discharge_kwh_vector:
+            # doe_export_ws=None -> returns zeros -> degradation term is 0).
+            # Since the real environment (nem_doe_env.py) DOES pass these
+            # through and therefore DOES include the degradation term in
+            # every actual EV owner's response, Oracle was silently
+            # optimising against a STALE, incomplete version of "the true
+            # participation model" -- undermining its own core premise of
+            # having privileged, exact knowledge of ρ(·). Fixed by passing
+            # the same information Oracle already reads/computes for its
+            # own DOE-clipping logic below, just forwarded to the
+            # participation model too. Units: doe_export_ws must be WATTS
+            # (per the function's docstring and its internal /1000.0
+            # conversion) -- NOT the kW variable (doe_export_kw) used
+            # elsewhere in this function for equipment-cap clipping.
             probs = self.model.participation_prob_vector(
                 c_t=c * 1000.0,   # $/kWh → $/MWh for participation model
                 distances_km=self.hub_distances,
                 mean_socs=mean_socs,
+                doe_export_ws=doe_export_norm * env.cfg.doe_normalise_by_w,  # W
+                n_connecteds=n_enrolled,
             )
             expected_n = n_enrolled * probs   # (H,)
 

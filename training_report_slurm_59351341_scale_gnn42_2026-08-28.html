@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SAC-GNN Training Report — unknown</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+          background: #f8f8f7; color: #0b0b0b; padding: 2rem;
+          max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 20px; font-weight: 500; margin-bottom: 4px; }
+  h2 { font-size: 14px; font-weight: 500; color: #52514e; margin: 2rem 0 1rem;
+        padding-bottom: 6px; border-bottom: 0.5px solid #e1e0d9; }
+  .meta { font-size: 13px; color: #898781; margin-bottom: 1.5rem; line-height: 1.6; }
+  .badge { display: inline-block; font-size: 11px; padding: 2px 8px;
+            border-radius: 4px; margin-left: 6px; vertical-align: middle; }
+  .badge-warn { background:#faeeda; color:#854f0b; }
+  .badge-ok   { background:#eaf3de; color:#3b6d11; }
+  .badge-info { background:#e8eef8; color:#185fa5; }
+  .metric-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(148px,1fr));
+                 gap: 12px; margin-bottom: 1.5rem; }
+  .card { background:#fff; border:0.5px solid rgba(11,11,11,.10);
+           border-radius:8px; padding:1rem; }
+  .card-label { font-size:12px; color:#898781; margin-bottom:4px; }
+  .card-value { font-size:22px; font-weight:500; }
+  .card-sub   { font-size:12px; color:#898781; margin-top:4px; }
+  .positive { color:#0f6e56; } .negative { color:#a32d2d; } .neutral { color:#185fa5; }
+  .section { margin-bottom:2rem; }
+  .section-header { display:flex; align-items:center; justify-content:space-between;
+                     margin-bottom:0.5rem; }
+  .section-title { font-size:13px; font-weight:500; color:#52514e; }
+  .btn { font-size:11px; padding:3px 10px; border-radius:4px; border:0.5px solid #c8c7c0;
+          background:#fff; cursor:pointer; color:#52514e; }
+  .btn:hover { background:#f1efea; }
+  .legend { display:flex; flex-wrap:wrap; gap:16px; font-size:12px;
+             color:#898781; margin-bottom:8px; }
+  .legend span { display:flex; align-items:center; gap:4px; }
+  .ldot { width:10px; height:10px; border-radius:2px; display:inline-block; }
+  .chart-wrap { position:relative; width:100%; background:#fff;
+                 border:0.5px solid rgba(11,11,11,.10); border-radius:8px; padding:1rem; }
+  .progress-bar { background:#f1efea; border-radius:4px; height:8px; margin-top:6px; }
+  .progress-fill { height:8px; border-radius:4px; background:#2a78d6; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th { text-align:left; font-weight:500; padding:6px 10px;
+        border-bottom:0.5px solid #e1e0d9; color:#52514e; }
+  td { padding:6px 10px; border-bottom:0.5px solid #f1efea; }
+  tr:last-child td { border-bottom:none; }
+  .pos { color:#0f6e56; font-weight:500; } .neg { color:#a32d2d; }
+  footer { margin-top:2rem; font-size:12px; color:#898781; }
+</style>
+</head>
+<body>
+
+<h1>SAC-GNN V2G Hub — Training Report</h1>
+<p class="meta">
+  Job: <strong>unknown</strong>
+  <span class="badge badge-info">1 log(s) merged</span>
+  <span class="badge badge-ok">✓ Completed</span>
+  <br>
+  Node: unknown &nbsp;·&nbsp; Generated: 2026-09-01 12:10
+  <br>
+  <span style="font-size:11px">logs/slurm_59351341_scale_gnn42_2026-08-28.err</span>
+</p>
+
+<h2>Training outcomes</h2>
+<div class="metric-row">
+  <div class="card">
+    <p class="card-label">Best eval profit</p>
+    <p class="card-value positive">+$5,900</p>
+    <p class="card-sub">Episode 1300</p>
+  </div>
+  <div class="card">
+    <p class="card-label">Episodes completed</p>
+    <p class="card-value">1,500 / 1,500</p>
+    <div class="progress-bar">
+      <div class="progress-fill" style="width:100.0%"></div>
+    </div>
+    <p class="card-sub">100.0% complete</p>
+  </div>
+  <div class="card">
+    <p class="card-label">Final DOE violation</p>
+    <p class="card-value negative">27.0 kW</p>
+    <p class="card-sub">Still present</p>
+  </div>
+  <div class="card">
+    <p class="card-label">Mean participation ρ</p>
+    <p class="card-value">11.3%</p>
+    <p class="card-sub">Avg across training</p>
+  </div>
+  <div class="card">
+    <p class="card-label">Final alpha</p>
+    <p class="card-value">0.0500</p>
+    <p class="card-sub">SAC entropy temp</p>
+  </div>
+</div>
+
+<h2>Performance &amp; timing</h2>
+<div class="metric-row">
+  <div class="card">
+    <p class="card-label">Total training time</p>
+    <p class="card-value neutral">54h 9m</p>
+    <p class="card-sub">All jobs combined</p>
+  </div>
+  <div class="card">
+    <p class="card-label">Avg time / episode</p>
+    <p class="card-value neutral">2.2 min</p>
+    <p class="card-sub">Recent avg (last 20%)</p>
+  </div>
+  <div class="card">
+    <p class="card-label">Throughput</p>
+    <p class="card-value neutral">27.5 ep/hr</p>
+    <p class="card-sub">7,912 steps/hr</p>
+  </div>
+  <div class="card">
+    <p class="card-label">Remaining</p>
+    <p class="card-value positive">0m</p>
+    <p class="card-sub">0 episodes left</p>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-header">
+    <p class="section-title">Episode duration (min/episode)</p>
+  </div>
+  <div class="legend">
+    <span><span class="ldot" style="background:#4a3aa7"></span>Min/episode</span>
+    <span><span class="ldot" style="border:1.5px dashed #eda100; display:inline-block; width:10px; height:10px; border-radius:2px;"></span>Rolling avg</span>
+  </div>
+  <div class="chart-wrap" style="height:180px">
+    <canvas id="timingChart"></canvas>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-header">
+    <p class="section-title">Episode reward (training)</p>
+    <button class="btn" id="clipBtn" onclick="toggleClip()">Show full range</button>
+  </div>
+  <div class="legend">
+    <span><span class="ldot" style="background:#2a78d6"></span>Episode reward</span>
+    <span><span class="ldot" style="background:#1baf7a"></span>10-ep moving avg</span>
+    <span style="font-size:11px;color:#eda100">⚡ Y-axis clipped by default (median ± 4×MAD)</span>
+  </div>
+  <div class="chart-wrap" style="height:260px">
+    <canvas id="rewardChart"></canvas>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-header">
+    <p class="section-title">Eval net profit at checkpoints (normal-day mean, excl. stress test)</p>
+    <button class="btn" id="evalClipBtn" onclick="toggleEvalClip()">Show full range</button>
+  </div>
+  <div class="legend">
+    <span><span class="ldot" style="background:#1baf7a"></span>Positive</span>
+    <span><span class="ldot" style="background:#e34948"></span>Negative</span>
+    <span style="font-size:11px;color:#eda100">⚡ Y-axis clipped by default (median ± 4×MAD)</span>
+    <span style="font-size:11px;color:#898781">Excludes the extreme negative-RRP stress-test day — matches best.pt selection metric</span>
+  </div>
+  <div class="chart-wrap" style="height:200px">
+    <canvas id="evalChart"></canvas>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-header">
+    <p class="section-title">Eval net profit — all 5 days pooled (for reference)</p>
+  </div>
+  <div class="legend">
+    <span><span class="ldot" style="background:#9b59b6"></span>Pooled (incl. stress test)</span>
+    <span style="font-size:11px;color:#898781">Dominated by the extreme negative-RRP day — shown for reference only, not used for checkpoint selection</span>
+  </div>
+  <div class="chart-wrap" style="height:200px">
+    <canvas id="evalPooledChart"></canvas>
+  </div>
+</div>
+
+<div class="section">
+  <p class="section-title">DOE violation (kW) per episode</p>
+  <div class="legend">
+    <span><span class="ldot" style="background:#e34948"></span>DOE violation kW</span>
+  </div>
+  <div class="chart-wrap" style="height:180px">
+    <canvas id="doeChart"></canvas>
+  </div>
+</div>
+
+<div class="section">
+  <p class="section-title">Alpha (entropy temperature) over training</p>
+  <div class="legend">
+    <span><span class="ldot" style="background:#eda100"></span>Alpha</span>
+  </div>
+  <div class="chart-wrap" style="height:160px">
+    <canvas id="alphaChart"></canvas>
+  </div>
+</div>
+
+<div class="section">
+  <p class="section-title">Evaluation checkpoints</p>
+  <div class="card" style="padding:0;overflow:hidden">
+    <table>
+      <thead>
+        <tr>
+          <th>Episode</th><th>Eval profit — Normal-day ($)</th>
+          <th>Eval profit — Pooled all 5 ($)</th>
+          <th>Participation ρ</th><th>DOE violation (kW)</th>
+        </tr>
+      </thead>
+      <tbody id="evalTable"></tbody>
+    </table>
+  </div>
+</div>
+
+<footer>SAC-GNN V2G Hub · Monash University FIT5126 · 2026-09-01 12:10</footer>
+
+<script>
+const trainData  = [{"time": "15:40:18", "episode": 10, "total": 1500, "reward": -1688670.5, "avg10": -1616131.4, "rho": 0.494, "doe_viol": 467134.0, "buf": 2880, "alpha": 0.64}, {"time": "16:01:54", "episode": 20, "total": 1500, "reward": -1601865.9, "avg10": -1622192.0, "rho": 0.339, "doe_viol": 489544.3, "buf": 5760, "alpha": 0.2833}, {"time": "16:23:23", "episode": 30, "total": 1500, "reward": -1661044.0, "avg10": -1468491.0, "rho": 0.415, "doe_viol": 311815.7, "buf": 8640, "alpha": 0.1074}, {"time": "16:44:52", "episode": 40, "total": 1500, "reward": -1554436.1, "avg10": -1585665.1, "rho": 0.338, "doe_viol": 337709.2, "buf": 11520, "alpha": 0.05}, {"time": "17:06:20", "episode": 50, "total": 1500, "reward": -1547848.1, "avg10": -1604989.4, "rho": 0.372, "doe_viol": 141308.4, "buf": 14400, "alpha": 0.05}, {"time": "17:27:57", "episode": 60, "total": 1500, "reward": -1267828.3, "avg10": -1333142.0, "rho": 0.434, "doe_viol": 128779.3, "buf": 17280, "alpha": 0.05}, {"time": "17:49:29", "episode": 70, "total": 1500, "reward": -1140160.6, "avg10": -1274194.8, "rho": 0.35, "doe_viol": 105736.0, "buf": 20160, "alpha": 0.05}, {"time": "18:11:01", "episode": 80, "total": 1500, "reward": -1212928.9, "avg10": -1035267.4, "rho": 0.201, "doe_viol": 126700.1, "buf": 23040, "alpha": 0.05}, {"time": "18:32:32", "episode": 90, "total": 1500, "reward": -874997.0, "avg10": -929004.8, "rho": 0.151, "doe_viol": 78117.4, "buf": 25920, "alpha": 0.05}, {"time": "18:54:04", "episode": 100, "total": 1500, "reward": -721198.5, "avg10": -851952.0, "rho": 0.139, "doe_viol": 49543.8, "buf": 28800, "alpha": 0.05}, {"time": "19:15:37", "episode": 110, "total": 1500, "reward": -785575.6, "avg10": -855263.5, "rho": 0.139, "doe_viol": 69035.7, "buf": 31680, "alpha": 0.05}, {"time": "19:37:06", "episode": 120, "total": 1500, "reward": -933598.9, "avg10": -833911.2, "rho": 0.133, "doe_viol": 69159.5, "buf": 34560, "alpha": 0.05}, {"time": "19:58:37", "episode": 130, "total": 1500, "reward": -848958.6, "avg10": -860338.9, "rho": 0.129, "doe_viol": 44701.7, "buf": 37440, "alpha": 0.05}, {"time": "20:20:05", "episode": 140, "total": 1500, "reward": -505255.7, "avg10": -758315.2, "rho": 0.126, "doe_viol": 12281.2, "buf": 40320, "alpha": 0.05}, {"time": "20:41:32", "episode": 150, "total": 1500, "reward": -381349.4, "avg10": -420555.1, "rho": 0.125, "doe_viol": 3278.9, "buf": 43200, "alpha": 0.05}, {"time": "21:03:03", "episode": 160, "total": 1500, "reward": -176214.0, "avg10": -296564.9, "rho": 0.124, "doe_viol": 786.7, "buf": 46080, "alpha": 0.05}, {"time": "21:24:31", "episode": 170, "total": 1500, "reward": -119546.3, "avg10": -183168.2, "rho": 0.129, "doe_viol": 538.0, "buf": 48960, "alpha": 0.05}, {"time": "21:45:59", "episode": 180, "total": 1500, "reward": -100478.8, "avg10": -111711.5, "rho": 0.123, "doe_viol": 477.9, "buf": 51840, "alpha": 0.05}, {"time": "22:07:27", "episode": 190, "total": 1500, "reward": -76023.3, "avg10": -94157.8, "rho": 0.12, "doe_viol": 337.1, "buf": 54720, "alpha": 0.05}, {"time": "22:28:55", "episode": 200, "total": 1500, "reward": -71187.3, "avg10": -71262.0, "rho": 0.12, "doe_viol": 278.8, "buf": 57600, "alpha": 0.05}, {"time": "22:50:29", "episode": 210, "total": 1500, "reward": -47639.4, "avg10": -44614.8, "rho": 0.115, "doe_viol": 195.3, "buf": 60480, "alpha": 0.05}, {"time": "23:11:59", "episode": 220, "total": 1500, "reward": -33052.6, "avg10": -39181.4, "rho": 0.113, "doe_viol": 440.9, "buf": 63360, "alpha": 0.05}, {"time": "23:33:31", "episode": 230, "total": 1500, "reward": -30435.1, "avg10": -36341.8, "rho": 0.119, "doe_viol": 984.1, "buf": 66240, "alpha": 0.05}, {"time": "23:55:01", "episode": 240, "total": 1500, "reward": -15883.3, "avg10": -27763.7, "rho": 0.117, "doe_viol": 54.2, "buf": 69120, "alpha": 0.05}, {"time": "00:16:32", "episode": 250, "total": 1500, "reward": -24430.3, "avg10": -31304.0, "rho": 0.117, "doe_viol": 68.5, "buf": 72000, "alpha": 0.05}, {"time": "00:38:06", "episode": 260, "total": 1500, "reward": -26551.9, "avg10": -26892.8, "rho": 0.118, "doe_viol": 82.0, "buf": 74880, "alpha": 0.05}, {"time": "00:59:37", "episode": 270, "total": 1500, "reward": -26041.4, "avg10": -23455.8, "rho": 0.11, "doe_viol": 414.5, "buf": 77760, "alpha": 0.05}, {"time": "01:21:08", "episode": 280, "total": 1500, "reward": -27604.4, "avg10": -24257.0, "rho": 0.119, "doe_viol": 79.0, "buf": 80640, "alpha": 0.05}, {"time": "01:42:38", "episode": 290, "total": 1500, "reward": -17554.4, "avg10": -21592.2, "rho": 0.113, "doe_viol": 49.1, "buf": 83520, "alpha": 0.05}, {"time": "02:04:08", "episode": 300, "total": 1500, "reward": -11013.5, "avg10": -21902.1, "rho": 0.106, "doe_viol": 28.5, "buf": 86400, "alpha": 0.05}, {"time": "02:25:41", "episode": 310, "total": 1500, "reward": -16197.7, "avg10": -27240.0, "rho": 0.116, "doe_viol": 48.6, "buf": 89280, "alpha": 0.05}, {"time": "02:47:11", "episode": 320, "total": 1500, "reward": -31998.9, "avg10": -30038.6, "rho": 0.114, "doe_viol": 130.5, "buf": 92160, "alpha": 0.05}, {"time": "03:08:40", "episode": 330, "total": 1500, "reward": -17561.1, "avg10": -20820.4, "rho": 0.105, "doe_viol": 55.1, "buf": 95040, "alpha": 0.05}, {"time": "03:30:10", "episode": 340, "total": 1500, "reward": -20937.3, "avg10": -21216.3, "rho": 0.111, "doe_viol": 45.4, "buf": 97920, "alpha": 0.05}, {"time": "03:51:40", "episode": 350, "total": 1500, "reward": -25588.2, "avg10": -21693.0, "rho": 0.108, "doe_viol": 59.6, "buf": 100800, "alpha": 0.05}, {"time": "04:13:12", "episode": 360, "total": 1500, "reward": -17947.0, "avg10": -20557.2, "rho": 0.109, "doe_viol": 66.5, "buf": 103680, "alpha": 0.05}, {"time": "04:34:42", "episode": 370, "total": 1500, "reward": -9591.4, "avg10": -20276.8, "rho": 0.11, "doe_viol": 29.8, "buf": 106560, "alpha": 0.05}, {"time": "04:56:12", "episode": 380, "total": 1500, "reward": -25211.9, "avg10": -17182.4, "rho": 0.11, "doe_viol": 97.6, "buf": 109440, "alpha": 0.05}, {"time": "05:17:44", "episode": 390, "total": 1500, "reward": -21170.8, "avg10": -21642.4, "rho": 0.1, "doe_viol": 85.3, "buf": 112320, "alpha": 0.05}, {"time": "05:39:18", "episode": 400, "total": 1500, "reward": -13847.7, "avg10": -26946.2, "rho": 0.108, "doe_viol": 46.5, "buf": 115200, "alpha": 0.05}, {"time": "06:00:54", "episode": 410, "total": 1500, "reward": -8605.4, "avg10": -13442.5, "rho": 0.107, "doe_viol": 23.6, "buf": 118080, "alpha": 0.05}, {"time": "06:22:28", "episode": 420, "total": 1500, "reward": -13945.5, "avg10": -14617.1, "rho": 0.114, "doe_viol": 28.4, "buf": 120960, "alpha": 0.05}, {"time": "06:44:01", "episode": 430, "total": 1500, "reward": -9637.1, "avg10": -15767.1, "rho": 0.102, "doe_viol": 29.9, "buf": 123840, "alpha": 0.05}, {"time": "07:05:35", "episode": 440, "total": 1500, "reward": -20685.5, "avg10": -14835.5, "rho": 0.111, "doe_viol": 70.4, "buf": 126720, "alpha": 0.05}, {"time": "07:27:08", "episode": 450, "total": 1500, "reward": -12985.7, "avg10": -18239.8, "rho": 0.106, "doe_viol": 25.6, "buf": 129600, "alpha": 0.05}, {"time": "07:48:45", "episode": 460, "total": 1500, "reward": -16683.6, "avg10": -14226.5, "rho": 0.103, "doe_viol": 67.5, "buf": 132480, "alpha": 0.05}, {"time": "08:10:17", "episode": 470, "total": 1500, "reward": -20417.9, "avg10": -14272.9, "rho": 0.106, "doe_viol": 52.7, "buf": 135360, "alpha": 0.05}, {"time": "08:32:02", "episode": 480, "total": 1500, "reward": -15104.3, "avg10": -13618.0, "rho": 0.113, "doe_viol": 54.9, "buf": 138240, "alpha": 0.05}, {"time": "08:54:11", "episode": 490, "total": 1500, "reward": -9849.2, "avg10": -12996.3, "rho": 0.106, "doe_viol": 40.4, "buf": 141120, "alpha": 0.05}, {"time": "09:16:19", "episode": 500, "total": 1500, "reward": -13794.5, "avg10": -11932.9, "rho": 0.104, "doe_viol": 32.7, "buf": 144000, "alpha": 0.05}, {"time": "09:38:30", "episode": 510, "total": 1500, "reward": -18433.9, "avg10": -12964.4, "rho": 0.104, "doe_viol": 76.6, "buf": 146880, "alpha": 0.05}, {"time": "10:00:39", "episode": 520, "total": 1500, "reward": -13459.9, "avg10": -12218.6, "rho": 0.106, "doe_viol": 47.2, "buf": 149760, "alpha": 0.05}, {"time": "10:22:47", "episode": 530, "total": 1500, "reward": -15231.8, "avg10": -11939.4, "rho": 0.102, "doe_viol": 19.7, "buf": 152640, "alpha": 0.05}, {"time": "10:44:55", "episode": 540, "total": 1500, "reward": -11451.5, "avg10": -13452.6, "rho": 0.1, "doe_viol": 37.9, "buf": 155520, "alpha": 0.05}, {"time": "11:07:04", "episode": 550, "total": 1500, "reward": -17511.4, "avg10": -11945.6, "rho": 0.096, "doe_viol": 77.5, "buf": 158400, "alpha": 0.05}, {"time": "11:29:16", "episode": 560, "total": 1500, "reward": -122634.9, "avg10": -25999.9, "rho": 0.104, "doe_viol": 1540.8, "buf": 161280, "alpha": 0.05}, {"time": "11:51:27", "episode": 570, "total": 1500, "reward": -14895.8, "avg10": -13421.4, "rho": 0.103, "doe_viol": 48.1, "buf": 164160, "alpha": 0.05}, {"time": "12:13:38", "episode": 580, "total": 1500, "reward": -6485.9, "avg10": -10155.5, "rho": 0.104, "doe_viol": 12.9, "buf": 167040, "alpha": 0.05}, {"time": "12:35:50", "episode": 590, "total": 1500, "reward": -10443.4, "avg10": -9010.5, "rho": 0.097, "doe_viol": 47.9, "buf": 169920, "alpha": 0.05}, {"time": "12:58:01", "episode": 600, "total": 1500, "reward": -7692.4, "avg10": -8606.7, "rho": 0.106, "doe_viol": 20.5, "buf": 172800, "alpha": 0.05}, {"time": "13:20:16", "episode": 610, "total": 1500, "reward": -16602.5, "avg10": -11235.6, "rho": 0.088, "doe_viol": 68.9, "buf": 175680, "alpha": 0.05}, {"time": "13:42:29", "episode": 620, "total": 1500, "reward": -10524.8, "avg10": -9423.0, "rho": 0.099, "doe_viol": 34.8, "buf": 178560, "alpha": 0.05}, {"time": "14:04:40", "episode": 630, "total": 1500, "reward": -8949.1, "avg10": -9806.9, "rho": 0.101, "doe_viol": 40.0, "buf": 181440, "alpha": 0.05}, {"time": "14:26:52", "episode": 640, "total": 1500, "reward": -11515.7, "avg10": -8430.3, "rho": 0.095, "doe_viol": 50.6, "buf": 184320, "alpha": 0.05}, {"time": "14:49:01", "episode": 650, "total": 1500, "reward": -17945.4, "avg10": -8955.4, "rho": 0.1, "doe_viol": 71.8, "buf": 187200, "alpha": 0.05}, {"time": "15:11:12", "episode": 660, "total": 1500, "reward": -3954.8, "avg10": -8345.4, "rho": 0.094, "doe_viol": 20.6, "buf": 190080, "alpha": 0.05}, {"time": "15:33:19", "episode": 670, "total": 1500, "reward": -6962.8, "avg10": -11019.7, "rho": 0.101, "doe_viol": 22.0, "buf": 192960, "alpha": 0.05}, {"time": "15:54:50", "episode": 680, "total": 1500, "reward": -3219.3, "avg10": -8948.1, "rho": 0.093, "doe_viol": 15.9, "buf": 195840, "alpha": 0.05}, {"time": "16:16:22", "episode": 690, "total": 1500, "reward": -13182.0, "avg10": -9784.5, "rho": 0.094, "doe_viol": 61.8, "buf": 198720, "alpha": 0.05}, {"time": "16:37:52", "episode": 700, "total": 1500, "reward": -5548.2, "avg10": -7922.6, "rho": 0.092, "doe_viol": 23.5, "buf": 201600, "alpha": 0.05}, {"time": "16:59:27", "episode": 710, "total": 1500, "reward": -9420.1, "avg10": -7846.1, "rho": 0.095, "doe_viol": 40.7, "buf": 204480, "alpha": 0.05}, {"time": "17:20:58", "episode": 720, "total": 1500, "reward": -11205.2, "avg10": -8376.5, "rho": 0.095, "doe_viol": 43.6, "buf": 207360, "alpha": 0.05}, {"time": "17:42:30", "episode": 730, "total": 1500, "reward": -8507.9, "avg10": -9921.9, "rho": 0.095, "doe_viol": 36.9, "buf": 210240, "alpha": 0.05}, {"time": "18:04:03", "episode": 740, "total": 1500, "reward": -12743.2, "avg10": -8487.9, "rho": 0.093, "doe_viol": 55.7, "buf": 213120, "alpha": 0.05}, {"time": "18:25:34", "episode": 750, "total": 1500, "reward": -16555.2, "avg10": -8323.0, "rho": 0.097, "doe_viol": 73.0, "buf": 216000, "alpha": 0.05}, {"time": "18:47:10", "episode": 760, "total": 1500, "reward": -5284.6, "avg10": -7763.2, "rho": 0.094, "doe_viol": 19.0, "buf": 218880, "alpha": 0.05}, {"time": "19:08:41", "episode": 770, "total": 1500, "reward": -5641.7, "avg10": -9090.7, "rho": 0.094, "doe_viol": 24.8, "buf": 221760, "alpha": 0.05}, {"time": "19:30:12", "episode": 780, "total": 1500, "reward": -8420.5, "avg10": -9253.1, "rho": 0.094, "doe_viol": 35.3, "buf": 224640, "alpha": 0.05}, {"time": "19:51:43", "episode": 790, "total": 1500, "reward": -11892.3, "avg10": -9291.9, "rho": 0.097, "doe_viol": 51.9, "buf": 227520, "alpha": 0.05}, {"time": "20:13:14", "episode": 800, "total": 1500, "reward": -6263.9, "avg10": -7206.9, "rho": 0.092, "doe_viol": 34.0, "buf": 230400, "alpha": 0.05}, {"time": "20:34:49", "episode": 810, "total": 1500, "reward": -14707.4, "avg10": -6960.2, "rho": 0.099, "doe_viol": 60.4, "buf": 233280, "alpha": 0.05}, {"time": "20:56:20", "episode": 820, "total": 1500, "reward": -957.0, "avg10": -7846.5, "rho": 0.095, "doe_viol": 13.7, "buf": 236160, "alpha": 0.05}, {"time": "21:17:52", "episode": 830, "total": 1500, "reward": -8687.7, "avg10": -9108.5, "rho": 0.089, "doe_viol": 37.7, "buf": 239040, "alpha": 0.05}, {"time": "21:39:25", "episode": 840, "total": 1500, "reward": -9098.0, "avg10": -8458.5, "rho": 0.095, "doe_viol": 24.9, "buf": 241920, "alpha": 0.05}, {"time": "22:00:58", "episode": 850, "total": 1500, "reward": -12873.2, "avg10": -8465.2, "rho": 0.091, "doe_viol": 54.2, "buf": 244800, "alpha": 0.05}, {"time": "22:22:36", "episode": 860, "total": 1500, "reward": -2935.5, "avg10": -6807.1, "rho": 0.096, "doe_viol": 17.2, "buf": 247680, "alpha": 0.05}, {"time": "22:44:09", "episode": 870, "total": 1500, "reward": -7174.3, "avg10": -7522.5, "rho": 0.094, "doe_viol": 28.2, "buf": 250560, "alpha": 0.05}, {"time": "23:05:42", "episode": 880, "total": 1500, "reward": -6266.7, "avg10": -8624.4, "rho": 0.094, "doe_viol": 25.4, "buf": 253440, "alpha": 0.05}, {"time": "23:27:15", "episode": 890, "total": 1500, "reward": -8156.4, "avg10": -6311.9, "rho": 0.096, "doe_viol": 34.4, "buf": 256320, "alpha": 0.05}, {"time": "23:48:51", "episode": 900, "total": 1500, "reward": -7104.9, "avg10": -7930.6, "rho": 0.098, "doe_viol": 32.4, "buf": 259200, "alpha": 0.05}, {"time": "00:10:27", "episode": 910, "total": 1500, "reward": -5051.9, "avg10": -6719.0, "rho": 0.095, "doe_viol": 17.2, "buf": 262080, "alpha": 0.05}, {"time": "00:32:01", "episode": 920, "total": 1500, "reward": -11111.3, "avg10": -6931.3, "rho": 0.095, "doe_viol": 50.0, "buf": 264960, "alpha": 0.05}, {"time": "00:53:35", "episode": 930, "total": 1500, "reward": -5227.7, "avg10": -7847.1, "rho": 0.092, "doe_viol": 25.7, "buf": 267840, "alpha": 0.05}, {"time": "01:15:09", "episode": 940, "total": 1500, "reward": -5339.4, "avg10": -5234.7, "rho": 0.091, "doe_viol": 23.6, "buf": 270720, "alpha": 0.05}, {"time": "01:36:43", "episode": 950, "total": 1500, "reward": -8516.5, "avg10": -6171.6, "rho": 0.093, "doe_viol": 28.3, "buf": 273600, "alpha": 0.05}, {"time": "01:58:19", "episode": 960, "total": 1500, "reward": -7946.8, "avg10": -7159.2, "rho": 0.095, "doe_viol": 38.0, "buf": 276480, "alpha": 0.05}, {"time": "02:19:52", "episode": 970, "total": 1500, "reward": -7142.5, "avg10": -6636.7, "rho": 0.096, "doe_viol": 26.7, "buf": 279360, "alpha": 0.05}, {"time": "02:41:25", "episode": 980, "total": 1500, "reward": -8902.2, "avg10": -6500.8, "rho": 0.095, "doe_viol": 43.8, "buf": 282240, "alpha": 0.05}, {"time": "03:02:59", "episode": 990, "total": 1500, "reward": -2760.1, "avg10": -6309.8, "rho": 0.093, "doe_viol": 13.6, "buf": 285120, "alpha": 0.05}, {"time": "03:24:31", "episode": 1000, "total": 1500, "reward": -9838.0, "avg10": -5307.8, "rho": 0.093, "doe_viol": 43.1, "buf": 288000, "alpha": 0.05}, {"time": "03:46:08", "episode": 1010, "total": 1500, "reward": -5414.2, "avg10": -6361.8, "rho": 0.093, "doe_viol": 28.9, "buf": 290880, "alpha": 0.05}, {"time": "04:07:41", "episode": 1020, "total": 1500, "reward": -5685.1, "avg10": -6899.2, "rho": 0.093, "doe_viol": 28.7, "buf": 293760, "alpha": 0.05}, {"time": "04:29:14", "episode": 1030, "total": 1500, "reward": -3333.4, "avg10": -5733.2, "rho": 0.097, "doe_viol": 14.0, "buf": 296640, "alpha": 0.05}, {"time": "04:50:48", "episode": 1040, "total": 1500, "reward": -5517.5, "avg10": -5455.1, "rho": 0.095, "doe_viol": 28.7, "buf": 299520, "alpha": 0.05}, {"time": "05:12:21", "episode": 1050, "total": 1500, "reward": -3205.6, "avg10": -5301.3, "rho": 0.085, "doe_viol": 14.7, "buf": 302400, "alpha": 0.05}, {"time": "05:33:57", "episode": 1060, "total": 1500, "reward": -4111.2, "avg10": -4235.0, "rho": 0.089, "doe_viol": 25.5, "buf": 305280, "alpha": 0.05}, {"time": "05:55:31", "episode": 1070, "total": 1500, "reward": -8158.6, "avg10": -5293.8, "rho": 0.09, "doe_viol": 42.6, "buf": 308160, "alpha": 0.05}, {"time": "06:17:04", "episode": 1080, "total": 1500, "reward": -6546.1, "avg10": -4597.2, "rho": 0.094, "doe_viol": 31.8, "buf": 311040, "alpha": 0.05}, {"time": "06:38:37", "episode": 1090, "total": 1500, "reward": -7401.7, "avg10": -4129.9, "rho": 0.096, "doe_viol": 32.9, "buf": 313920, "alpha": 0.05}, {"time": "07:00:11", "episode": 1100, "total": 1500, "reward": -3595.2, "avg10": -5821.8, "rho": 0.087, "doe_viol": 22.4, "buf": 316800, "alpha": 0.05}, {"time": "07:21:47", "episode": 1110, "total": 1500, "reward": -7178.4, "avg10": -3895.5, "rho": 0.089, "doe_viol": 32.6, "buf": 319680, "alpha": 0.05}, {"time": "07:43:20", "episode": 1120, "total": 1500, "reward": -1890.1, "avg10": -4427.6, "rho": 0.088, "doe_viol": 13.2, "buf": 322560, "alpha": 0.05}, {"time": "08:04:53", "episode": 1130, "total": 1500, "reward": 1431.5, "avg10": -3243.3, "rho": 0.09, "doe_viol": 1.5, "buf": 325440, "alpha": 0.05}, {"time": "08:26:25", "episode": 1140, "total": 1500, "reward": -787.9, "avg10": -2878.2, "rho": 0.087, "doe_viol": 7.2, "buf": 328320, "alpha": 0.05}, {"time": "08:48:33", "episode": 1150, "total": 1500, "reward": -4612.8, "avg10": -2693.4, "rho": 0.088, "doe_viol": 18.8, "buf": 331200, "alpha": 0.05}, {"time": "09:10:47", "episode": 1160, "total": 1500, "reward": 283.8, "avg10": -2871.2, "rho": 0.088, "doe_viol": 9.4, "buf": 334080, "alpha": 0.05}, {"time": "09:32:58", "episode": 1170, "total": 1500, "reward": -4486.4, "avg10": -1869.0, "rho": 0.086, "doe_viol": 45.6, "buf": 336960, "alpha": 0.05}, {"time": "09:55:08", "episode": 1180, "total": 1500, "reward": -8766.4, "avg10": -3740.5, "rho": 0.091, "doe_viol": 40.8, "buf": 339840, "alpha": 0.05}, {"time": "10:17:18", "episode": 1190, "total": 1500, "reward": -6332.2, "avg10": -3340.8, "rho": 0.085, "doe_viol": 32.2, "buf": 342720, "alpha": 0.05}, {"time": "10:39:29", "episode": 1200, "total": 1500, "reward": -5076.1, "avg10": -3610.0, "rho": 0.087, "doe_viol": 28.6, "buf": 345600, "alpha": 0.05}, {"time": "11:01:42", "episode": 1210, "total": 1500, "reward": -1975.4, "avg10": -1968.2, "rho": 0.087, "doe_viol": 29.4, "buf": 348480, "alpha": 0.05}, {"time": "11:23:52", "episode": 1220, "total": 1500, "reward": -4621.0, "avg10": -4819.5, "rho": 0.085, "doe_viol": 24.5, "buf": 351360, "alpha": 0.05}, {"time": "11:46:02", "episode": 1230, "total": 1500, "reward": -4587.1, "avg10": -5590.6, "rho": 0.091, "doe_viol": 36.5, "buf": 354240, "alpha": 0.05}, {"time": "12:08:12", "episode": 1240, "total": 1500, "reward": -10024.1, "avg10": -3897.6, "rho": 0.089, "doe_viol": 45.8, "buf": 357120, "alpha": 0.05}, {"time": "12:30:23", "episode": 1250, "total": 1500, "reward": -6497.9, "avg10": -813.4, "rho": 0.086, "doe_viol": 36.4, "buf": 360000, "alpha": 0.05}, {"time": "12:52:37", "episode": 1260, "total": 1500, "reward": -4878.6, "avg10": -2405.8, "rho": 0.084, "doe_viol": 28.3, "buf": 362880, "alpha": 0.05}, {"time": "13:14:47", "episode": 1270, "total": 1500, "reward": 509.1, "avg10": -545.6, "rho": 0.08, "doe_viol": 8.2, "buf": 365760, "alpha": 0.05}, {"time": "13:36:59", "episode": 1280, "total": 1500, "reward": 6022.5, "avg10": -2903.5, "rho": 0.082, "doe_viol": 13.4, "buf": 368640, "alpha": 0.05}, {"time": "13:59:10", "episode": 1290, "total": 1500, "reward": -3927.6, "avg10": -987.6, "rho": 0.082, "doe_viol": 21.2, "buf": 371520, "alpha": 0.05}, {"time": "14:21:21", "episode": 1300, "total": 1500, "reward": -1008.1, "avg10": -372.7, "rho": 0.084, "doe_viol": 11.9, "buf": 374400, "alpha": 0.05}, {"time": "14:43:36", "episode": 1310, "total": 1500, "reward": -4465.1, "avg10": -313.7, "rho": 0.087, "doe_viol": 21.6, "buf": 377280, "alpha": 0.05}, {"time": "15:05:48", "episode": 1320, "total": 1500, "reward": 2938.6, "avg10": -2039.8, "rho": 0.083, "doe_viol": 4.9, "buf": 380160, "alpha": 0.05}, {"time": "15:27:59", "episode": 1330, "total": 1500, "reward": -5042.5, "avg10": -522.1, "rho": 0.083, "doe_viol": 37.1, "buf": 383040, "alpha": 0.05}, {"time": "15:49:47", "episode": 1340, "total": 1500, "reward": -8249.1, "avg10": 3413.6, "rho": 0.083, "doe_viol": 35.8, "buf": 385920, "alpha": 0.05}, {"time": "16:11:22", "episode": 1350, "total": 1500, "reward": -8856.0, "avg10": 122.2, "rho": 0.084, "doe_viol": 49.6, "buf": 388800, "alpha": 0.05}, {"time": "16:32:58", "episode": 1360, "total": 1500, "reward": -7725.0, "avg10": 431.3, "rho": 0.074, "doe_viol": 36.9, "buf": 391680, "alpha": 0.05}, {"time": "16:54:33", "episode": 1370, "total": 1500, "reward": -3903.3, "avg10": -98.3, "rho": 0.083, "doe_viol": 23.9, "buf": 394560, "alpha": 0.05}, {"time": "17:16:07", "episode": 1380, "total": 1500, "reward": -82.3, "avg10": -896.8, "rho": 0.076, "doe_viol": 43.6, "buf": 397440, "alpha": 0.05}, {"time": "17:37:42", "episode": 1390, "total": 1500, "reward": 19119.0, "avg10": 2110.0, "rho": 0.084, "doe_viol": 33.2, "buf": 400320, "alpha": 0.05}, {"time": "17:59:16", "episode": 1400, "total": 1500, "reward": -3104.6, "avg10": -2178.1, "rho": 0.082, "doe_viol": 29.7, "buf": 403200, "alpha": 0.05}, {"time": "18:20:54", "episode": 1410, "total": 1500, "reward": 1259.8, "avg10": 1821.6, "rho": 0.085, "doe_viol": 16.4, "buf": 406080, "alpha": 0.05}, {"time": "18:42:29", "episode": 1420, "total": 1500, "reward": -2030.5, "avg10": -199.9, "rho": 0.081, "doe_viol": 18.8, "buf": 408960, "alpha": 0.05}, {"time": "19:04:03", "episode": 1430, "total": 1500, "reward": -8480.8, "avg10": 886.9, "rho": 0.082, "doe_viol": 40.5, "buf": 411840, "alpha": 0.05}, {"time": "19:25:36", "episode": 1440, "total": 1500, "reward": 5495.4, "avg10": -1506.2, "rho": 0.08, "doe_viol": 12.8, "buf": 414720, "alpha": 0.05}, {"time": "19:47:10", "episode": 1450, "total": 1500, "reward": -1945.9, "avg10": -617.1, "rho": 0.082, "doe_viol": 26.1, "buf": 417600, "alpha": 0.05}, {"time": "20:08:47", "episode": 1460, "total": 1500, "reward": -3487.4, "avg10": -1277.3, "rho": 0.084, "doe_viol": 30.5, "buf": 420480, "alpha": 0.05}, {"time": "20:30:21", "episode": 1470, "total": 1500, "reward": -452.2, "avg10": -1547.8, "rho": 0.082, "doe_viol": 23.2, "buf": 423360, "alpha": 0.05}, {"time": "20:51:56", "episode": 1480, "total": 1500, "reward": -3288.3, "avg10": -2520.0, "rho": 0.084, "doe_viol": 25.2, "buf": 426240, "alpha": 0.05}, {"time": "21:13:30", "episode": 1490, "total": 1500, "reward": -3203.6, "avg10": -475.0, "rho": 0.085, "doe_viol": 37.8, "buf": 429120, "alpha": 0.05}, {"time": "21:35:04", "episode": 1500, "total": 1500, "reward": -6447.8, "avg10": -475.1, "rho": 0.081, "doe_viol": 27.0, "buf": 432000, "alpha": 0.05}];
+const evalData   = [{"time": "17:06:25", "episode": 50, "profit": -1278487.1, "profit_normal": -1278487.0799999998, "participation": 0.33, "doe_viol": 100800.3}, {"time": "18:54:07", "episode": 100, "profit": -562326.5, "profit_normal": -562326.5, "participation": 0.124, "doe_viol": 56716.6}, {"time": "20:41:35", "episode": 150, "profit": -83933.4, "profit_normal": -83933.38, "participation": 0.116, "doe_viol": 519.7}, {"time": "22:28:58", "episode": 200, "profit": -10230.2, "profit_normal": -10230.22, "participation": 0.119, "doe_viol": 1.3}, {"time": "00:16:35", "episode": 250, "profit": -10030.6, "profit_normal": -10030.58, "participation": 0.115, "doe_viol": 47.3}, {"time": "02:04:11", "episode": 300, "profit": -8726.7, "profit_normal": -8726.74, "participation": 0.115, "doe_viol": 2.7}, {"time": "03:51:42", "episode": 350, "profit": -9351.6, "profit_normal": -9351.619999999999, "participation": 0.121, "doe_viol": 0.1}, {"time": "05:39:21", "episode": 400, "profit": -2180.6, "profit_normal": -2180.580000000001, "participation": 0.1, "doe_viol": 2.9}, {"time": "07:27:11", "episode": 450, "profit": -2024.6, "profit_normal": -2024.6199999999997, "participation": 0.096, "doe_viol": 0.0}, {"time": "09:16:22", "episode": 500, "profit": -4666.6, "profit_normal": -4666.58, "participation": 0.107, "doe_viol": 0.0}, {"time": "11:07:07", "episode": 550, "profit": -1364.5, "profit_normal": -1364.5400000000002, "participation": 0.101, "doe_viol": 0.0}, {"time": "12:58:04", "episode": 600, "profit": -658.7, "profit_normal": -658.6599999999999, "participation": 0.096, "doe_viol": 0.0}, {"time": "14:49:04", "episode": 650, "profit": 1271.7, "profit_normal": 1271.72, "participation": 0.088, "doe_viol": 4.4}, {"time": "16:37:55", "episode": 700, "profit": -3820.1, "profit_normal": -3820.1200000000003, "participation": 0.104, "doe_viol": 0.0}, {"time": "18:25:37", "episode": 750, "profit": 3303.1, "profit_normal": 3303.1, "participation": 0.087, "doe_viol": 0.0}, {"time": "20:13:17", "episode": 800, "profit": 492.7, "profit_normal": 492.68, "participation": 0.09, "doe_viol": 0.0}, {"time": "22:01:01", "episode": 850, "profit": 4717.5, "profit_normal": 4717.5, "participation": 0.073, "doe_viol": 0.0}, {"time": "23:48:54", "episode": 900, "profit": 326.7, "profit_normal": 326.69999999999993, "participation": 0.093, "doe_viol": 0.0}, {"time": "01:36:46", "episode": 950, "profit": -466.0, "profit_normal": -465.9799999999999, "participation": 0.101, "doe_viol": 0.0}, {"time": "03:24:34", "episode": 1000, "profit": 3078.9, "profit_normal": 3078.9000000000005, "participation": 0.089, "doe_viol": 0.0}, {"time": "05:12:24", "episode": 1050, "profit": 1973.8, "profit_normal": 1973.8200000000002, "participation": 0.089, "doe_viol": 0.0}, {"time": "07:00:14", "episode": 1100, "profit": 3221.5, "profit_normal": 3221.5, "participation": 0.087, "doe_viol": 0.0}, {"time": "08:48:36", "episode": 1150, "profit": 5035.2, "profit_normal": 5035.24, "participation": 0.078, "doe_viol": 0.0}, {"time": "10:39:32", "episode": 1200, "profit": 4778.5, "profit_normal": 4778.5199999999995, "participation": 0.081, "doe_viol": 0.0}, {"time": "12:30:26", "episode": 1250, "profit": 4595.4, "profit_normal": 4595.38, "participation": 0.078, "doe_viol": 0.0}, {"time": "14:21:24", "episode": 1300, "profit": 5899.7, "profit_normal": 5899.660000000001, "participation": 0.078, "doe_viol": 0.0}, {"time": "16:11:25", "episode": 1350, "profit": 5026.5, "profit_normal": 5026.5199999999995, "participation": 0.07, "doe_viol": 0.8}, {"time": "17:59:19", "episode": 1400, "profit": 5421.3, "profit_normal": 5421.32, "participation": 0.071, "doe_viol": 0.0}, {"time": "19:47:13", "episode": 1450, "profit": 5180.5, "profit_normal": 5180.46, "participation": 0.072, "doe_viol": 0.0}, {"time": "21:35:07", "episode": 1500, "profit": 5004.6, "profit_normal": 5004.6, "participation": 0.075, "doe_viol": 0.0}];
+const timingData = [{"episode": 20, "duration_sec": 1296, "ep_gap": 10, "min_per_ep": 2.16}, {"episode": 30, "duration_sec": 1289, "ep_gap": 10, "min_per_ep": 2.1483333333333334}, {"episode": 40, "duration_sec": 1289, "ep_gap": 10, "min_per_ep": 2.1483333333333334}, {"episode": 50, "duration_sec": 1288, "ep_gap": 10, "min_per_ep": 2.1466666666666665}, {"episode": 60, "duration_sec": 1297, "ep_gap": 10, "min_per_ep": 2.1616666666666666}, {"episode": 70, "duration_sec": 1292, "ep_gap": 10, "min_per_ep": 2.1533333333333333}, {"episode": 80, "duration_sec": 1292, "ep_gap": 10, "min_per_ep": 2.1533333333333333}, {"episode": 90, "duration_sec": 1291, "ep_gap": 10, "min_per_ep": 2.1516666666666664}, {"episode": 100, "duration_sec": 1292, "ep_gap": 10, "min_per_ep": 2.1533333333333333}, {"episode": 110, "duration_sec": 1293, "ep_gap": 10, "min_per_ep": 2.1550000000000002}, {"episode": 120, "duration_sec": 1289, "ep_gap": 10, "min_per_ep": 2.1483333333333334}, {"episode": 130, "duration_sec": 1291, "ep_gap": 10, "min_per_ep": 2.1516666666666664}, {"episode": 140, "duration_sec": 1288, "ep_gap": 10, "min_per_ep": 2.1466666666666665}, {"episode": 150, "duration_sec": 1287, "ep_gap": 10, "min_per_ep": 2.145}, {"episode": 160, "duration_sec": 1291, "ep_gap": 10, "min_per_ep": 2.1516666666666664}, {"episode": 170, "duration_sec": 1288, "ep_gap": 10, "min_per_ep": 2.1466666666666665}, {"episode": 180, "duration_sec": 1288, "ep_gap": 10, "min_per_ep": 2.1466666666666665}, {"episode": 190, "duration_sec": 1288, "ep_gap": 10, "min_per_ep": 2.1466666666666665}, {"episode": 200, "duration_sec": 1288, "ep_gap": 10, "min_per_ep": 2.1466666666666665}, {"episode": 210, "duration_sec": 1294, "ep_gap": 10, "min_per_ep": 2.1566666666666667}, {"episode": 220, "duration_sec": 1290, "ep_gap": 10, "min_per_ep": 2.15}, {"episode": 230, "duration_sec": 1292, "ep_gap": 10, "min_per_ep": 2.1533333333333333}, {"episode": 240, "duration_sec": 1290, "ep_gap": 10, "min_per_ep": 2.15}, {"episode": 250, "duration_sec": 1291, "ep_gap": 10, "min_per_ep": 2.1516666666666664}, {"episode": 260, "duration_sec": 1294, "ep_gap": 10, "min_per_ep": 2.1566666666666667}, {"episode": 270, "duration_sec": 1291, "ep_gap": 10, "min_per_ep": 2.1516666666666664}, {"episode": 280, "duration_sec": 1291, "ep_gap": 10, "min_per_ep": 2.1516666666666664}, {"episode": 290, "duration_sec": 1290, "ep_gap": 10, "min_per_ep": 2.15}, {"episode": 300, "duration_sec": 1290, "ep_gap": 10, "min_per_ep": 2.15}, {"episode": 310, "duration_sec": 1293, "ep_gap": 10, "min_per_ep": 2.1550000000000002}, {"episode": 320, "duration_sec": 1290, "ep_gap": 10, "min_per_ep": 2.15}, {"episode": 330, "duration_sec": 1289, "ep_gap": 10, "min_per_ep": 2.1483333333333334}, {"episode": 340, "duration_sec": 1290, "ep_gap": 10, "min_per_ep": 2.15}, {"episode": 350, "duration_sec": 1290, "ep_gap": 10, "min_per_ep": 2.15}, {"episode": 360, "duration_sec": 1292, "ep_gap": 10, "min_per_ep": 2.1533333333333333}, {"episode": 370, "duration_sec": 1290, "ep_gap": 10, "min_per_ep": 2.15}, {"episode": 380, "duration_sec": 1290, "ep_gap": 10, "min_per_ep": 2.15}, {"episode": 390, "duration_sec": 1292, "ep_gap": 10, "min_per_ep": 2.1533333333333333}, {"episode": 400, "duration_sec": 1294, "ep_gap": 10, "min_per_ep": 2.1566666666666667}, {"episode": 410, "duration_sec": 1296, "ep_gap": 10, "min_per_ep": 2.16}, {"episode": 420, "duration_sec": 1294, "ep_gap": 10, "min_per_ep": 2.1566666666666667}, {"episode": 430, "duration_sec": 1293, "ep_gap": 10, "min_per_ep": 2.1550000000000002}, {"episode": 440, "duration_sec": 1294, "ep_gap": 10, "min_per_ep": 2.1566666666666667}, {"episode": 450, "duration_sec": 1293, "ep_gap": 10, "min_per_ep": 2.1550000000000002}, {"episode": 460, "duration_sec": 1297, "ep_gap": 10, "min_per_ep": 2.1616666666666666}, {"episode": 470, "duration_sec": 1292, "ep_gap": 10, "min_per_ep": 2.1533333333333333}, {"episode": 480, "duration_sec": 1305, "ep_gap": 10, "min_per_ep": 2.175}, {"episode": 490, "duration_sec": 1329, "ep_gap": 10, "min_per_ep": 2.215}, {"episode": 500, "duration_sec": 1328, "ep_gap": 10, "min_per_ep": 2.2133333333333334}, {"episode": 510, "duration_sec": 1331, "ep_gap": 10, "min_per_ep": 2.2183333333333333}, {"episode": 520, "duration_sec": 1329, "ep_gap": 10, "min_per_ep": 2.215}, {"episode": 530, "duration_sec": 1328, "ep_gap": 10, "min_per_ep": 2.2133333333333334}, {"episode": 540, "duration_sec": 1328, "ep_gap": 10, "min_per_ep": 2.2133333333333334}, {"episode": 550, "duration_sec": 1329, "ep_gap": 10, "min_per_ep": 2.215}, {"episode": 560, "duration_sec": 1332, "ep_gap": 10, "min_per_ep": 2.2199999999999998}, {"episode": 570, "duration_sec": 1331, "ep_gap": 10, "min_per_ep": 2.2183333333333333}, {"episode": 580, "duration_sec": 1331, "ep_gap": 10, "min_per_ep": 2.2183333333333333}, {"episode": 590, "duration_sec": 1332, "ep_gap": 10, "min_per_ep": 2.2199999999999998}, {"episode": 600, "duration_sec": 1331, "ep_gap": 10, "min_per_ep": 2.2183333333333333}, {"episode": 610, "duration_sec": 1335, "ep_gap": 10, "min_per_ep": 2.225}, {"episode": 620, "duration_sec": 1333, "ep_gap": 10, "min_per_ep": 2.2216666666666667}, {"episode": 630, "duration_sec": 1331, "ep_gap": 10, "min_per_ep": 2.2183333333333333}, {"episode": 640, "duration_sec": 1332, "ep_gap": 10, "min_per_ep": 2.2199999999999998}, {"episode": 650, "duration_sec": 1329, "ep_gap": 10, "min_per_ep": 2.215}, {"episode": 660, "duration_sec": 1331, "ep_gap": 10, "min_per_ep": 2.2183333333333333}, {"episode": 670, "duration_sec": 1327, "ep_gap": 10, "min_per_ep": 2.211666666666667}, {"episode": 680, "duration_sec": 1291, "ep_gap": 10, "min_per_ep": 2.1516666666666664}, {"episode": 690, "duration_sec": 1292, "ep_gap": 10, "min_per_ep": 2.1533333333333333}, {"episode": 700, "duration_sec": 1290, "ep_gap": 10, "min_per_ep": 2.15}, {"episode": 710, "duration_sec": 1295, "ep_gap": 10, "min_per_ep": 2.158333333333333}, {"episode": 720, "duration_sec": 1291, "ep_gap": 10, "min_per_ep": 2.1516666666666664}, {"episode": 730, "duration_sec": 1292, "ep_gap": 10, "min_per_ep": 2.1533333333333333}, {"episode": 740, "duration_sec": 1293, "ep_gap": 10, "min_per_ep": 2.1550000000000002}, {"episode": 750, "duration_sec": 1291, "ep_gap": 10, "min_per_ep": 2.1516666666666664}, {"episode": 760, "duration_sec": 1296, "ep_gap": 10, "min_per_ep": 2.16}, {"episode": 770, "duration_sec": 1291, "ep_gap": 10, "min_per_ep": 2.1516666666666664}, {"episode": 780, "duration_sec": 1291, "ep_gap": 10, "min_per_ep": 2.1516666666666664}, {"episode": 790, "duration_sec": 1291, "ep_gap": 10, "min_per_ep": 2.1516666666666664}, {"episode": 800, "duration_sec": 1291, "ep_gap": 10, "min_per_ep": 2.1516666666666664}, {"episode": 810, "duration_sec": 1295, "ep_gap": 10, "min_per_ep": 2.158333333333333}, {"episode": 820, "duration_sec": 1291, "ep_gap": 10, "min_per_ep": 2.1516666666666664}, {"episode": 830, "duration_sec": 1292, "ep_gap": 10, "min_per_ep": 2.1533333333333333}, {"episode": 840, "duration_sec": 1293, "ep_gap": 10, "min_per_ep": 2.1550000000000002}, {"episode": 850, "duration_sec": 1293, "ep_gap": 10, "min_per_ep": 2.1550000000000002}, {"episode": 860, "duration_sec": 1298, "ep_gap": 10, "min_per_ep": 2.163333333333333}, {"episode": 870, "duration_sec": 1293, "ep_gap": 10, "min_per_ep": 2.1550000000000002}, {"episode": 880, "duration_sec": 1293, "ep_gap": 10, "min_per_ep": 2.1550000000000002}, {"episode": 890, "duration_sec": 1293, "ep_gap": 10, "min_per_ep": 2.1550000000000002}, {"episode": 900, "duration_sec": 1296, "ep_gap": 10, "min_per_ep": 2.16}, {"episode": 920, "duration_sec": 1294, "ep_gap": 10, "min_per_ep": 2.1566666666666667}, {"episode": 930, "duration_sec": 1294, "ep_gap": 10, "min_per_ep": 2.1566666666666667}, {"episode": 940, "duration_sec": 1294, "ep_gap": 10, "min_per_ep": 2.1566666666666667}, {"episode": 950, "duration_sec": 1294, "ep_gap": 10, "min_per_ep": 2.1566666666666667}, {"episode": 960, "duration_sec": 1296, "ep_gap": 10, "min_per_ep": 2.16}, {"episode": 970, "duration_sec": 1293, "ep_gap": 10, "min_per_ep": 2.1550000000000002}, {"episode": 980, "duration_sec": 1293, "ep_gap": 10, "min_per_ep": 2.1550000000000002}, {"episode": 990, "duration_sec": 1294, "ep_gap": 10, "min_per_ep": 2.1566666666666667}, {"episode": 1000, "duration_sec": 1292, "ep_gap": 10, "min_per_ep": 2.1533333333333333}, {"episode": 1010, "duration_sec": 1297, "ep_gap": 10, "min_per_ep": 2.1616666666666666}, {"episode": 1020, "duration_sec": 1293, "ep_gap": 10, "min_per_ep": 2.1550000000000002}, {"episode": 1030, "duration_sec": 1293, "ep_gap": 10, "min_per_ep": 2.1550000000000002}, {"episode": 1040, "duration_sec": 1294, "ep_gap": 10, "min_per_ep": 2.1566666666666667}, {"episode": 1050, "duration_sec": 1293, "ep_gap": 10, "min_per_ep": 2.1550000000000002}, {"episode": 1060, "duration_sec": 1296, "ep_gap": 10, "min_per_ep": 2.16}, {"episode": 1070, "duration_sec": 1294, "ep_gap": 10, "min_per_ep": 2.1566666666666667}, {"episode": 1080, "duration_sec": 1293, "ep_gap": 10, "min_per_ep": 2.1550000000000002}, {"episode": 1090, "duration_sec": 1293, "ep_gap": 10, "min_per_ep": 2.1550000000000002}, {"episode": 1100, "duration_sec": 1294, "ep_gap": 10, "min_per_ep": 2.1566666666666667}, {"episode": 1110, "duration_sec": 1296, "ep_gap": 10, "min_per_ep": 2.16}, {"episode": 1120, "duration_sec": 1293, "ep_gap": 10, "min_per_ep": 2.1550000000000002}, {"episode": 1130, "duration_sec": 1293, "ep_gap": 10, "min_per_ep": 2.1550000000000002}, {"episode": 1140, "duration_sec": 1292, "ep_gap": 10, "min_per_ep": 2.1533333333333333}, {"episode": 1150, "duration_sec": 1328, "ep_gap": 10, "min_per_ep": 2.2133333333333334}, {"episode": 1160, "duration_sec": 1334, "ep_gap": 10, "min_per_ep": 2.2233333333333336}, {"episode": 1170, "duration_sec": 1331, "ep_gap": 10, "min_per_ep": 2.2183333333333333}, {"episode": 1180, "duration_sec": 1330, "ep_gap": 10, "min_per_ep": 2.216666666666667}, {"episode": 1190, "duration_sec": 1330, "ep_gap": 10, "min_per_ep": 2.216666666666667}, {"episode": 1200, "duration_sec": 1331, "ep_gap": 10, "min_per_ep": 2.2183333333333333}, {"episode": 1210, "duration_sec": 1333, "ep_gap": 10, "min_per_ep": 2.2216666666666667}, {"episode": 1220, "duration_sec": 1330, "ep_gap": 10, "min_per_ep": 2.216666666666667}, {"episode": 1230, "duration_sec": 1330, "ep_gap": 10, "min_per_ep": 2.216666666666667}, {"episode": 1240, "duration_sec": 1330, "ep_gap": 10, "min_per_ep": 2.216666666666667}, {"episode": 1250, "duration_sec": 1331, "ep_gap": 10, "min_per_ep": 2.2183333333333333}, {"episode": 1260, "duration_sec": 1334, "ep_gap": 10, "min_per_ep": 2.2233333333333336}, {"episode": 1270, "duration_sec": 1330, "ep_gap": 10, "min_per_ep": 2.216666666666667}, {"episode": 1280, "duration_sec": 1332, "ep_gap": 10, "min_per_ep": 2.2199999999999998}, {"episode": 1290, "duration_sec": 1331, "ep_gap": 10, "min_per_ep": 2.2183333333333333}, {"episode": 1300, "duration_sec": 1331, "ep_gap": 10, "min_per_ep": 2.2183333333333333}, {"episode": 1310, "duration_sec": 1335, "ep_gap": 10, "min_per_ep": 2.225}, {"episode": 1320, "duration_sec": 1332, "ep_gap": 10, "min_per_ep": 2.2199999999999998}, {"episode": 1330, "duration_sec": 1331, "ep_gap": 10, "min_per_ep": 2.2183333333333333}, {"episode": 1340, "duration_sec": 1308, "ep_gap": 10, "min_per_ep": 2.18}, {"episode": 1350, "duration_sec": 1295, "ep_gap": 10, "min_per_ep": 2.158333333333333}, {"episode": 1360, "duration_sec": 1296, "ep_gap": 10, "min_per_ep": 2.16}, {"episode": 1370, "duration_sec": 1295, "ep_gap": 10, "min_per_ep": 2.158333333333333}, {"episode": 1380, "duration_sec": 1294, "ep_gap": 10, "min_per_ep": 2.1566666666666667}, {"episode": 1390, "duration_sec": 1295, "ep_gap": 10, "min_per_ep": 2.158333333333333}, {"episode": 1400, "duration_sec": 1294, "ep_gap": 10, "min_per_ep": 2.1566666666666667}, {"episode": 1410, "duration_sec": 1298, "ep_gap": 10, "min_per_ep": 2.163333333333333}, {"episode": 1420, "duration_sec": 1295, "ep_gap": 10, "min_per_ep": 2.158333333333333}, {"episode": 1430, "duration_sec": 1294, "ep_gap": 10, "min_per_ep": 2.1566666666666667}, {"episode": 1440, "duration_sec": 1293, "ep_gap": 10, "min_per_ep": 2.1550000000000002}, {"episode": 1450, "duration_sec": 1294, "ep_gap": 10, "min_per_ep": 2.1566666666666667}, {"episode": 1460, "duration_sec": 1297, "ep_gap": 10, "min_per_ep": 2.1616666666666666}, {"episode": 1470, "duration_sec": 1294, "ep_gap": 10, "min_per_ep": 2.1566666666666667}, {"episode": 1480, "duration_sec": 1295, "ep_gap": 10, "min_per_ep": 2.158333333333333}, {"episode": 1490, "duration_sec": 1294, "ep_gap": 10, "min_per_ep": 2.1566666666666667}, {"episode": 1500, "duration_sec": 1294, "ep_gap": 10, "min_per_ep": 2.1566666666666667}];
+const rewardClipLow  = -40000.0;
+const rewardClipHigh = 22000.0;
+const evalClipLow    = -25000.0;
+const evalClipHigh   = 26000.0;
+
+const eps     = trainData.map(r => r.episode);
+const rewards = trainData.map(r => r.reward);
+const avg10   = trainData.map((_, i) => {
+  const sl = trainData.slice(Math.max(0,i-9), i+1);
+  return sl.reduce((a,b)=>a+b.reward,0)/sl.length;
+});
+const doeViol = trainData.map(r => r.doe_viol ?? 0);
+const alphas  = trainData.map(r => r.alpha ?? null);
+const timingEps = timingData.map(d => d.episode);
+const minPerEp  = timingData.map(d => +d.min_per_ep.toFixed(2));
+const rollingAvg = (arr, n) => arr.map((_,i) => {
+  const sl = arr.slice(Math.max(0,i-n+1),i+1);
+  return sl.reduce((a,b)=>a+b,0)/sl.length;
+});
+const timingAvg = rollingAvg(minPerEp, 10);
+
+const grid = '#e1e0d9', tick = '#898781';
+const base = {
+  responsive:true, maintainAspectRatio:false, animation:false,
+  plugins:{ legend:{display:false}, tooltip:{mode:'index',intersect:false} },
+  scales:{
+    x:{grid:{color:grid}, ticks:{color:tick,maxTicksLimit:12,font:{size:11}}},
+    y:{grid:{color:grid}, ticks:{color:tick,font:{size:11}}}
+  }
+};
+const profitFmt = v => (v<0?'-$':'$')+Math.abs(v/1000).toFixed(0)+'k';
+
+new Chart(document.getElementById('timingChart'), {
+  type:'line',
+  data:{
+    labels:timingEps,
+    datasets:[
+      {label:'Min/ep', data:minPerEp, borderColor:'#4a3aa7', borderWidth:1.5, pointRadius:0, tension:0.2, fill:false},
+      {label:'Avg',    data:timingAvg, borderColor:'#eda100', borderWidth:2, borderDash:[5,3], pointRadius:0, tension:0.3, fill:false}
+    ]
+  },
+  options:{...base, scales:{...base.scales,
+    y:{...base.scales.y, ticks:{...base.scales.y.ticks, callback:v=>v.toFixed(1)+' min'}}
+  }}
+});
+
+let clipped = true;
+const rewardChart = new Chart(document.getElementById('rewardChart'), {
+  type:'line',
+  data:{
+    labels:eps,
+    datasets:[
+      {label:'Reward',   data:rewards, borderColor:'#2a78d6', borderWidth:1.5, pointRadius:0, tension:0.2, fill:false},
+      {label:'10-ep avg',data:avg10,   borderColor:'#1baf7a', borderWidth:2, borderDash:[5,3], pointRadius:0, tension:0.3, fill:false}
+    ]
+  },
+  options:{...base, scales:{...base.scales,
+    y:{...base.scales.y,
+      min:rewardClipLow, max:rewardClipHigh,
+      ticks:{...base.scales.y.ticks, callback:profitFmt}
+    }
+  }}
+});
+
+function toggleClip() {
+  clipped = !clipped;
+  const sc = rewardChart.options.scales.y;
+  if (clipped) {
+    sc.min = rewardClipLow; sc.max = rewardClipHigh;
+    document.getElementById('clipBtn').textContent = 'Show full range';
+  } else {
+    delete sc.min; delete sc.max;
+    document.getElementById('clipBtn').textContent = 'Clip outliers';
+  }
+  rewardChart.update();
+}
+
+let evalClipped = true;
+let evalChart;
+// Primary chart uses profit_normal (excludes the stress-test day) — this
+// is the metric that actually drives best.pt selection and convergence
+// detection in train_sac_gnn.py, so this chart should match what the
+// training loop was actually optimising against.
+evalChart = new Chart(document.getElementById('evalChart'), {
+  type:'bar',
+  data:{
+    labels:evalData.map(e=>e.episode),
+    datasets:[{
+      label:'Eval profit (normal-day, excl. stress test)',
+      data:evalData.map(e=>e.profit_normal),
+      backgroundColor:evalData.map(e=>e.profit_normal>=0?'#1baf7a':'#e34948'),
+      borderRadius:3, borderSkipped:false
+    }]
+  },
+  options:{...base, scales:{...base.scales,
+    y:{...base.scales.y,
+      min:evalClipLow, max:evalClipHigh,
+      ticks:{...base.scales.y.ticks, callback:profitFmt}
+    }
+  }}
+});
+
+function toggleEvalClip() {
+  evalClipped = !evalClipped;
+  const sc = evalChart.options.scales.y;
+  if (evalClipped) {
+    sc.min = evalClipLow; sc.max = evalClipHigh;
+    document.getElementById('evalClipBtn').textContent = 'Show full range';
+  } else {
+    delete sc.min; delete sc.max;
+    document.getElementById('evalClipBtn').textContent = 'Clip outliers';
+  }
+  evalChart.update();
+}
+
+// Secondary chart: all 5 days pooled (includes the extreme stress-test
+// day) — shown for reference/transparency only, un-clipped since its
+// whole purpose here is to show the reader how dominant that one day's
+// magnitude is relative to the normal-day chart above.
+new Chart(document.getElementById('evalPooledChart'), {
+  type:'bar',
+  data:{
+    labels:evalData.map(e=>e.episode),
+    datasets:[{
+      label:'Eval profit (pooled, all 5 days)',
+      data:evalData.map(e=>e.profit),
+      backgroundColor:'#9b59b6',
+      borderRadius:3, borderSkipped:false
+    }]
+  },
+  options:{...base, scales:{...base.scales,
+    y:{...base.scales.y, ticks:{...base.scales.y.ticks, callback:profitFmt}}
+  }}
+});
+
+new Chart(document.getElementById('doeChart'), {
+  type:'line',
+  data:{
+    labels:eps,
+    datasets:[{
+      label:'DOE kW', data:doeViol,
+      borderColor:'#e34948', backgroundColor:'rgba(227,73,72,0.08)',
+      borderWidth:1.5, pointRadius:0, tension:0.2, fill:true
+    }]
+  },
+  options:{...base, scales:{...base.scales,
+    y:{...base.scales.y, ticks:{...base.scales.y.ticks, callback:v=>v+' kW'}}
+  }}
+});
+
+new Chart(document.getElementById('alphaChart'), {
+  type:'line',
+  data:{
+    labels:eps,
+    datasets:[{
+      label:'Alpha', data:alphas,
+      borderColor:'#eda100', borderWidth:1.5, pointRadius:0, tension:0.2, fill:false
+    }]
+  },
+  options:{...base, scales:{...base.scales,
+    y:{...base.scales.y, ticks:{...base.scales.y.ticks, callback:v=>v.toExponential(1)}}
+  }}
+});
+
+const tbody = document.getElementById('evalTable');
+evalData.forEach(e => {
+  const clsN = e.profit_normal>=0?'pos':'neg', signN=e.profit_normal>=0?'+':'';
+  const clsP = e.profit>=0?'pos':'neg', signP=e.profit>=0?'+':'';
+  tbody.innerHTML += `<tr>
+    <td>${e.episode}</td>
+    <td class="${clsN}">${signN}${e.profit_normal.toLocaleString('en-AU',{maximumFractionDigits:0})}</td>
+    <td class="${clsP}">${signP}${e.profit.toLocaleString('en-AU',{maximumFractionDigits:0})}</td>
+    <td>${(e.participation*100).toFixed(1)}%</td>
+    <td>${e.doe_viol.toFixed(1)}</td>
+  </tr>`;
+});
+</script>
+</body>
+</html>
