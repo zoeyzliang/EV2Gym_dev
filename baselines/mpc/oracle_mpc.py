@@ -128,7 +128,6 @@ class OracleMPCBaseline:
 
             # Dispatch decision: discharge if RRP > incentive cost, charge if RRP < 0
             kwh_per_ev = env.cfg.mean_discharge_kwh_per_ev
-            dt_hr = 5.0 / 60.0
 
             if rrp > c * 1000.0:
                 # Profitable to discharge: positive dispatch
