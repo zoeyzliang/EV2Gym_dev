@@ -475,9 +475,31 @@ class NEMDOEEnv(gym.Env):
             else (self._hub_states[i].doe_import_w / 1000.0)
             for i in range(self.H)
         ])
+        # Floating-point precision tolerance
+        # -------------------------------------
+        # raw_dispatch_kw round-trips through the float32 observation
+        # space (DOE limit is stored as float32 in _build_observation())
+        # and the float32 action space, while directional_doe_limit_kw is
+        # computed fresh in float64 with no such round-trip. This can
+        # produce a sub-microwatt spurious "violation" (confirmed
+        # numerically: ~1e-6 kW magnitude, ~50% of boundary-hugging
+        # dispatches) for any agent that deliberately dispatches exactly
+        # at the DOE limit -- notably OracleMPC, whose one-step-optimal
+        # dispatch is min(doe_limit, equipment_cap), i.e. exactly at the
+        # boundary whenever DOE binds. With H=21 hubs each independently
+        # affected ~50% of the time, the probability of ALL hubs being
+        # simultaneously precision-clean on a given step is ~(0.5)^21,
+        # i.e. effectively zero -- producing an apparent 0.0% DOE
+        # compliance rate for OracleMPC that reflects float32 rounding
+        # noise, not genuine constraint violation. 1e-3 kW (1 W) is
+        # ~1000x the observed rounding-noise magnitude (physically
+        # negligible for kW-scale hub dispatch) while remaining far
+        # below any genuine violation magnitude (Greedy/RulePrice violate
+        # by tens of kW when they do, not fractions of a Watt).
+        DOE_VIOLATION_TOLERANCE_KW = 1e-3
         doe_violations_kw = np.maximum(
             0.0,
-            np.abs(raw_dispatch_kw) - directional_doe_limit_kw
+            np.abs(raw_dispatch_kw) - directional_doe_limit_kw - DOE_VIOLATION_TOLERANCE_KW
         )
 
         # --- Participation draw (hidden from agent) ---
