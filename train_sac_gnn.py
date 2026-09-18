@@ -383,6 +383,36 @@ VALIDATION_DAYS = [
 # FIXED_EVAL_DAYS by this name. Points to the same VALIDATION_DAYS list.
 FIXED_EVAL_DAYS = VALIDATION_DAYS
 
+# --- Automated checkpoint-selection leakage guard -----------------------
+# The comment block above explains WHY VALIDATION_DAYS must be disjoint
+# from evaluate.py's CASE_STUDIES (the final reported test set); this
+# assertion actually ENFORCES it at runtime, rather than relying solely
+# on the two lists having been hand-authored not to overlap. If someone
+# edits either list in future without checking the other, this fails
+# loudly at training start rather than silently reintroducing leakage.
+#
+# NOTE: these dates are a local, hardcoded copy of evaluate.py's
+# CASE_STUDIES keys, not a live import — train_sac_gnn.py and evaluate.py
+# are independent entry points and do not otherwise depend on one
+# another. If CASE_STUDIES in evaluate.py is ever changed, this list
+# must be updated to match, or this check becomes stale and silently
+# stops protecting against the leakage it exists to prevent.
+_CASE_STUDY_DAYS = {
+    "2024-01-25",  # Summer Peak
+    "2024-03-12",  # High Volatility
+    "2024-02-13",  # Negative RRP (stress test)
+    "2024-06-15",  # Winter Average
+    "2024-01-28",  # Weekend Low Demand
+}
+_overlap = set(VALIDATION_DAYS) & _CASE_STUDY_DAYS
+assert not _overlap, (
+    f"Checkpoint-selection leakage detected: VALIDATION_DAYS and "
+    f"evaluate.py's CASE_STUDIES share date(s) {_overlap}. Best.pt "
+    f"would be selected using days later used for final reported "
+    f"evaluation. Fix by replacing the overlapping date(s) in "
+    f"VALIDATION_DAYS with a different date of similar character."
+)
+
 # Index of the (validation) negative-RRP day within VALIDATION_DAYS
 # (0-based). Used to exclude it from best.pt selection and convergence
 # detection for the same reason the test-set stress-test day is excluded
