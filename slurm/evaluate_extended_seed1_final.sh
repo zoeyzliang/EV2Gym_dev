@@ -41,5 +41,5 @@ python evaluate.py \
     --sac_flat_checkpoint /scratch2/fr57/zlia0072/ev2gym_training/results/_no_such_checkpoint/best.pt \
     --n_runs 100 \
     --seed 1 \
-    --zone greater_melbourne \
+    --graph_path data/graphs/greater_melbourne.pkl \
     --results_dir /scratch2/fr57/zlia0072/ev2gym_training/results/evaluation_32hub_seed1_extended2500_final_20260904
