@@ -27,6 +27,15 @@ import sys
 import numpy as np
 import torch
 
+# CPU-inference workloads this small (single-graph, single-timestep
+# forward pass) can be dominated by PyTorch's default intra-op thread-pool
+# coordination overhead rather than actual compute, producing inflated and
+# highly variable latency on CPU. Pinning to a single thread is a standard
+# fix for this specific pattern; confirmed necessary here after an initial
+# run showed p95 ~500ms with high variance even on a dedicated compute
+# node (i.e. not explained by shared-node contention alone).
+torch.set_num_threads(1)
+
 # Reuse evaluate.py's own environment factory directly, rather than
 # reconstructing NEMDOEEnv/PriceLoader/ParticipationModel construction by
 # hand -- guessing at this pipeline from partial views has been wrong
