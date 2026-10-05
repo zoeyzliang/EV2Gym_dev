@@ -1,0 +1,42 @@
+#!/bin/bash
+#SBATCH --job-name=eval_fresh_gcnvgnn_s1_best
+#SBATCH --account=fr57
+#SBATCH --partition=gpu
+#SBATCH --qos=normal
+#SBATCH --gres=gpu:1
+#SBATCH --constraint=L40S
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=32G
+#SBATCH --time=18:00:00
+#SBATCH --output=/scratch2/fr57/zlia0072/ev2gym_training/logs/slurm_%j_eval_fresh_gcnvgnn_s1_best.out
+#SBATCH --error=/scratch2/fr57/zlia0072/ev2gym_training/logs/slurm_%j_eval_fresh_gcnvgnn_s1_best.err
+
+set -euo pipefail
+
+WORKDIR=/fs04/scratch2/fr57/zlia0072/ev2gym_training/EV2Gym_dev
+cd "$WORKDIR"
+
+source /apps/anaconda/2024.02-1/etc/profile.d/conda.sh
+conda activate ev2gym
+
+python -c "import torch; print('CUDA:', torch.cuda.is_available())"
+
+git pull origin main
+
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+# Matched-budget FRESH comparison, seed 1, checkpoint best.pt for BOTH agents.
+# SAC-GNN: trained from scratch to a 2500-episode target, terminated at ~episode 2480
+# by a CUDA allocator assertion (so no final.pt). SAC-GCN: trained from scratch for the
+# same 2500-episode target and COMPLETED (final.pt exists). The same checkpoint-selection
+# rule is applied to both agents (best) so the comparison is like-for-like; this replaces
+# the earlier fresh-GNN vs original-1500-episode-GCN pairing.
+# SAC-Flat intentionally points at a nonexistent path (never trained at 32-hub scale).
+python evaluate.py \
+    --sac_gnn_checkpoint /scratch2/fr57/zlia0072/ev2gym_training/results/sac_gnn_32hub_seed1_20260904_fresh2500/checkpoints/best.pt \
+    --sac_gcn_checkpoint /scratch2/fr57/zlia0072/ev2gym_training/results/sac_gcn_32hub_seed1_20260904_fresh2500/checkpoints/best.pt \
+    --sac_flat_checkpoint /scratch2/fr57/zlia0072/ev2gym_training/results/_no_such_checkpoint/best.pt \
+    --n_runs 100 \
+    --seed 1 \
+    --graph_path data/graphs/greater_melbourne.pkl \
+    --results_dir /scratch2/fr57/zlia0072/ev2gym_training/results/evaluation_32hub_seed1_matchedfresh2500_best_20260904
