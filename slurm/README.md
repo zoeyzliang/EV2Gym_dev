@@ -16,6 +16,45 @@ asks for 3 days and `pilot_coupled_lambda.sh` for 12 h. Lower the limit of a
 job that is already pending with
 `scontrol update JobId=<id> TimeLimit=HH:MM:SS` (it can only be lowered).
 
+## Feeder-environment batch (redesign, from 2026-10-06)
+
+Environment: `NEMFeederEnv` (`--env feeder`), spec in `docs/env_redesign_spec.md`.
+Several training runs share one GPU job (`train_feeder_pack.sh`): a single
+run uses ~1 CPU core and ~3 GB and leaves the GPU mostly idle.
+
+**Step 1: λ pilot** (one GPU job, three penalty levels, 300 episodes):
+
+```
+sbatch --job-name=fdr_pilot slurm/train_feeder_pack.sh \
+    "sac_gnn:42:lc0.5 sac_gnn:42:lc2 sac_gnn:42:lc10" pilot --doe_mode per_hub --episodes 300
+```
+
+Evaluate each pilot run with `evaluate_feeder.py` and choose the **smallest λ
+whose limit violations are no worse than the NoV2G baseline's**, then report
+arbitrage profit at that λ. The reward itself is not comparable across λ.
+
+**Step 2: main comparison (E1), one job per seed**, 4 runs packed:
+
+```
+sbatch --job-name=fdr_s42 slurm/train_feeder_pack.sh \
+    "sac_gnn:42 sac_gcn:42 sac_flat:42 sac_gnn:42:noedge" perhub_lc<λ> \
+    --doe_mode per_hub --lambda_conf <λ> --episodes 1500
+```
+
+E2 (network-aware limits), E3 (forecast error) and the PV sensitivity use the
+same script with `--doe_mode network`, `--spatial permuted`,
+`--forecast_sigma`, `--pv_penetration`.
+
+**Step 3: evaluation**, per seed (36 stratified held-out days × 3 paired
+repetitions + the perfect-foresight LP bound, about 30–45 min):
+
+```
+sbatch --job-name=eval_fdr_s42 slurm/evaluate_feeder.sh feeder_perhub_lc<λ>_<date> 42 --doe_mode per_hub
+```
+
+Training time limits stay provisional (3 days) until
+`benchmark_train_speed.sh` has measured the post-speed-up step time.
+
 ## Coupled-energy-model batch (2026-10-04) — referee M1/M3/M4 rerun
 
 `EnvConfig.energy_model="coupled"`: delivered energy is
