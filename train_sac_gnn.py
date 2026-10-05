@@ -120,6 +120,20 @@ DEFAULT_CONFIG = {
     # self-loop-only graph — shared per-hub weights, no message passing.
     "no_edges": False,
 
+    # Feeder environment (nem_env/feeder_env.py, docs/env_redesign_spec.md).
+    # "legacy" = NEMDOEEnv (draft v1); "feeder" = NEMFeederEnv.
+    "env": "legacy",
+    "doe_mode": "per_hub",          # per_hub | network
+    "spatial": "feeder",            # feeder | permuted
+    "forecast_sigma": 0.05,
+    "pv_penetration": 0.6,
+    "kappa_load": 0.7,
+    "graph": "electrical",          # electrical | road (feeder env only)
+    "lambda_unmet": 1.0,
+    "grid_profiles_path": "data/nem_cache/VIC1_grid_profiles_2022-01-01_2024-12-31.parquet",
+    # AEMO administered pricing / market suspension, excluded from training
+    "exclude_window": ("2022-06-12", "2022-06-24"),
+
     # SAC hyperparameters
     "gamma": 0.99,
     "tau": 0.005,
@@ -234,6 +248,18 @@ def parse_args():
              "self-loop-only graph (shared per-hub weights, no inter-hub "
              "message passing). Not valid with --agent sac_flat.",
     )
+    parser.add_argument("--env", type=str, default="legacy", choices=["legacy", "feeder"],
+                        help="legacy = NEMDOEEnv (draft v1); feeder = NEMFeederEnv (redesign)")
+    parser.add_argument("--doe_mode", type=str, default="per_hub", choices=["per_hub", "network"],
+                        help="feeder env: per-hub DOEs (pre-allocated) or network-aware limits")
+    parser.add_argument("--spatial", type=str, default="feeder", choices=["feeder", "permuted"],
+                        help="feeder env: keep spatial DOE structure or permute it across hubs")
+    parser.add_argument("--forecast_sigma", type=float, default=None,
+                        help="feeder env: background forecast error (default 0.05)")
+    parser.add_argument("--pv_penetration", type=float, default=None,
+                        help="feeder env: PV peak as a fraction of bus peak load (default 0.6)")
+    parser.add_argument("--graph", type=str, default="electrical", choices=["electrical", "road"],
+                        help="feeder env: graph used by GNN/GCN encoders")
     parser.add_argument("--no_eval", action="store_true",
                         help="Skip evaluation runs (faster, less informative)")
     return parser.parse_args()
@@ -242,6 +268,39 @@ def parse_args():
 # ---------------------------------------------------------------------------
 # Environment factory
 # ---------------------------------------------------------------------------
+
+def _make_feeder_env(cfg, split, seed, road_graph, hub_configs, loader, model):
+    """Build NEMFeederEnv and the graph its encoders use (spec §9)."""
+    from nem_env.feeder import FeederConfig
+    from nem_env.feeder_env import NEMFeederEnv, FeederEnvConfig
+    from nem_env.grid_profiles import GridProfiles
+
+    if split == "train" and cfg.get("exclude_window"):
+        loader.exclude_window(*cfg["exclude_window"])
+    profiles = GridProfiles(cfg["region"], cfg["cache_dir"])
+    profiles.load_cache(cfg["grid_profiles_path"])
+
+    env_cfg = FeederEnvConfig(
+        doe_mode=cfg["doe_mode"],
+        spatial=cfg["spatial"],
+        forecast_sigma=cfg["forecast_sigma"],
+        lambda_unmet=cfg["lambda_unmet"],
+        feeder=FeederConfig(kappa_load=cfg["kappa_load"], pv_penetration=cfg["pv_penetration"]),
+    )
+    if cfg.get("lambda_conf") is not None:
+        env_cfg.lambda_doe = cfg["lambda_conf"]
+    env = NEMFeederEnv(hub_configs, loader, profiles, model, env_cfg, seed=seed)
+
+    graph = env.feeder.electrical_graph(road_graph) if cfg["graph"] == "electrical" else road_graph
+    if cfg.get("no_edges"):
+        graph = graph.self_loops_only()
+    logger.info(
+        f"Feeder env: doe_mode={env_cfg.doe_mode}, spatial={env_cfg.spatial}, "
+        f"sigma={env_cfg.forecast_sigma}, pv={env_cfg.feeder.pv_penetration}, "
+        f"lambda_doe={env_cfg.lambda_doe}, graph={graph.zone_name} ({graph.n_edges} edges)"
+    )
+    return env, graph, hub_configs
+
 
 def make_env(cfg: dict, split: str = "train", seed: int = 42) -> NEMDOEEnv:
     """
@@ -307,6 +366,9 @@ def make_env(cfg: dict, split: str = "train", seed: int = 42) -> NEMDOEEnv:
         # cfg["gamma"] — that key is the unrelated SAC discount factor.
         seed=seed,
     )
+
+    if cfg.get("env", "legacy") == "feeder":
+        return _make_feeder_env(cfg, split, seed, graph, hub_configs, loader, model)
 
     env_config_kwargs = {"energy_model": cfg.get("energy_model", "coupled")}
     if cfg.get("no_edges"):
@@ -626,6 +688,12 @@ def train(cfg: dict, resume_path: str = None, no_eval: bool = False, start_episo
         critic_hidden=cfg["critic_hidden"],
         dropout=cfg["dropout"],
     )
+    is_feeder = cfg.get("env", "legacy") == "feeder"
+    if is_feeder:
+        # Feeder env: 17 node features and normalised actions in [-1, 1];
+        # the env scales each hub by its own capacity (all agents alike).
+        net_cfg.node_feature_dim = train_env.node_feature_dim
+        net_cfg.equipment_cap_kw = 1.0
 
     agent_type = cfg.get("agent", "sac_gnn")
     n_hubs     = len(hub_configs)
@@ -675,6 +743,8 @@ def train(cfg: dict, resume_path: str = None, no_eval: bool = False, start_episo
             update_every=cfg["update_every"],
             seed=cfg["seed"],
             device=device,
+            **(dict(node_feature_dim=train_env.node_feature_dim, cap_feature=None, cap_const=1.0)
+               if is_feeder else {}),
         )
         logger.info("Architecture: SAC-Flat (MLP only — no graph encoder)")
     else:
@@ -957,6 +1027,14 @@ if __name__ == "__main__":
     if args.no_edges and args.agent == "sac_flat":
         raise SystemExit("--no_edges applies to sac_gnn/sac_gcn only (sac_flat has no graph).")
     cfg["no_edges"] = args.no_edges
+    cfg["env"] = args.env
+    cfg["doe_mode"] = args.doe_mode
+    cfg["spatial"] = args.spatial
+    cfg["graph"] = args.graph
+    if args.forecast_sigma is not None:
+        cfg["forecast_sigma"] = args.forecast_sigma
+    if args.pv_penetration is not None:
+        cfg["pv_penetration"] = args.pv_penetration
     logger.info(f"Energy model: {cfg['energy_model']}; no_edges: {cfg['no_edges']}")
 
     # Set seeds for reproducibility. torch was previously never seeded, so

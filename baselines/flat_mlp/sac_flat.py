@@ -53,7 +53,8 @@ def _try_torch():
 
 
 def build_flat_networks(obs_dim: int, action_dim: int,
-                        hidden_dim: int = 256, price_max: float = 0.50):  # $/kWh
+                        hidden_dim: int = 256, price_max: float = 0.50,  # $/kWh
+                        node_feature_dim: int = 9, cap_feature=5, cap_const: float = None):
     """Build flat MLP actor and twin critics."""
     import torch
     import torch.nn as nn
@@ -114,8 +115,15 @@ def build_flat_networks(obs_dim: int, action_dim: int,
 
             # Extract true per-hub equipment cap (kW) from node feature [5]
             # of the flat obs. Layout: [hub0(9 feats), hub1(9 feats), ...]
-            node_feats = obs.view(B, self.n_hubs, 9)
-            equipment_caps = node_feats[:, :, 5]   # (B, n_hubs), kW, unnormalised
+            # Legacy env: cap read from feature [5] (kW). Feeder env: actions
+            # are normalised (cap_const=1.0) and the env scales each hub by
+            # its own capacity, as for SAC-GNN/GCN.
+            if cap_const is not None:
+                equipment_caps = torch.full((B, self.n_hubs), float(cap_const),
+                                            dtype=obs.dtype, device=obs.device)
+            else:
+                node_feats = obs.view(B, self.n_hubs, node_feature_dim)
+                equipment_caps = node_feats[:, :, cap_feature]   # (B, n_hubs), kW
 
             h = self.shared(obs)   # (B, hidden_dim)
 
@@ -238,7 +246,12 @@ class SACFlatAgent:
         price_max: float = 0.50,    # $/kWh
         seed: Optional[int] = None,
         device: Optional[str] = None,
+        node_feature_dim: int = 9,
+        cap_feature: Optional[int] = 5,
+        cap_const: Optional[float] = None,
     ):
+        self._net_kwargs = dict(node_feature_dim=node_feature_dim,
+                                cap_feature=cap_feature, cap_const=cap_const)
         self.obs_dim = obs_dim
         self.action_dim = action_dim
         self.n_hubs = action_dim - 1
@@ -290,14 +303,14 @@ class SACFlatAgent:
         import torch.optim as optim
 
         actor, critic1, critic2 = build_flat_networks(
-            self.obs_dim, self.action_dim, hidden_dim, price_max
+            self.obs_dim, self.action_dim, hidden_dim, price_max, **self._net_kwargs
         )
         self.actor = actor.to(self.device)
         self.critic1 = critic1.to(self.device)
         self.critic2 = critic2.to(self.device)
 
         _, target_critic1, target_critic2 = build_flat_networks(
-            self.obs_dim, self.action_dim, hidden_dim, price_max
+            self.obs_dim, self.action_dim, hidden_dim, price_max, **self._net_kwargs
         )
         self.target_critic1 = target_critic1.to(self.device)
         self.target_critic2 = target_critic2.to(self.device)

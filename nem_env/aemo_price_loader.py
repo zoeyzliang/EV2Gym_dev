@@ -158,6 +158,20 @@ class PriceLoader:
         self._price_df = pd.read_parquet(cache_path)
         logger.info(f"Loaded {len(self._price_df)} intervals from {cache_path}")
 
+    def exclude_window(self, start: str, end: str) -> None:
+        """
+        Drop all intervals on dates in [start, end] (inclusive) so they are
+        never sampled. Used to keep non-market prices out of training, e.g.
+        AEMO's administered pricing / market suspension of June 2022.
+        Must be called before the first sample_episode().
+        """
+        df = self._price_df
+        d = pd.Series(df.index.date, index=df.index)
+        mask = (d >= pd.Timestamp(start).date()) & (d <= pd.Timestamp(end).date())
+        self._price_df = df[~mask.to_numpy()]
+        self._tier_days = None          # rebuilt (without these days) on next sample
+        logger.info(f"Excluded {int(mask.sum())} intervals ({start}..{end}) from sampling")
+
     def load_synthetic(
         self,
         n_days: int = 365,
