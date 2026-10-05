@@ -7,7 +7,7 @@
 #SBATCH --constraint=L40S
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
-#SBATCH --time=12:00:00
+#SBATCH --time=02:00:00
 #SBATCH --output=/scratch2/fr57/zlia0072/ev2gym_training/logs/slurm_%j_eval_lc100.out
 #SBATCH --error=/scratch2/fr57/zlia0072/ev2gym_training/logs/slurm_%j_eval_lc100.err
 
@@ -34,6 +34,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # reuses the main comparison's own SAC-GNN seed42 result (identical
 # checkpoint and conditions), evaluated in evaluate_21hub_seed42.sh.
 python evaluate.py \
+    --energy_model legacy \
     --sac_gnn_checkpoint /scratch2/fr57/zlia0072/ev2gym_training/results/sac_gnn_21hub_seed42_lc100_20260904/checkpoints/best.pt \
     --sac_gcn_checkpoint /scratch2/fr57/zlia0072/ev2gym_training/results/_no_such_checkpoint/best.pt \
     --sac_flat_checkpoint /scratch2/fr57/zlia0072/ev2gym_training/results/_no_such_checkpoint/best.pt \

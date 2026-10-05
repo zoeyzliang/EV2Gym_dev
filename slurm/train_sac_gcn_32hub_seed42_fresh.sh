@@ -42,6 +42,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # Results directory is distinct (_fresh2500) from both the original
 # (_20260904) and resumed (_extended2500) runs.
 python train_sac_gnn.py \
+    --energy_model legacy \
     --agent sac_gcn \
     --zone greater_melbourne \
     --seed 42 \

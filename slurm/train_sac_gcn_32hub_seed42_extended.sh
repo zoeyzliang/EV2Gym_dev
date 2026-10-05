@@ -35,6 +35,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # the process lengths that have completed on this cluster (a 2500-episode single
 # process was terminated by a CUDA allocator assertion at ~episode 2480).
 python train_sac_gnn.py \
+    --energy_model legacy \
     --agent sac_gcn \
     --zone greater_melbourne \
     --seed 42 \

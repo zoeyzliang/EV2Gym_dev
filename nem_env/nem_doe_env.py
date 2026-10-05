@@ -63,7 +63,10 @@ DOE dynamics:
 
 Participation model:
   ρ(c, d, s) = σ(β₀ + β₁c + β₂d + β₃s)  [hidden from agent]
-  n_respond_{i,t} ~ Binomial(n_enrolled_{i,t}, ρ)
+  n_respond_{i,t} ~ Binomial(pool_{i,t}, ρ)
+    pool = min(n_connected, n_chargers) under EnvConfig.energy_model="coupled"
+    (default), n_enrolled under "legacy" (draft-v1 results).
+  Delivered energy: see EnvConfig "Energy model".
   Agent infers participation elasticity from dispatch outcomes only.
 
 Episode:
@@ -113,7 +116,9 @@ class EnvConfig:
     mean_soc_init, mean_soc_std : float
         Initial mean SoC distribution across hubs.
     mean_discharge_kwh_per_ev : float
-        Mean energy per responding EV per interval (kWh).
+        Mean energy per responding EV per interval (kWh). Used ONLY by
+        energy_model="legacy"; the coupled model derives energy from the
+        clipped dispatch and per-charger power instead.
     soc_ar1_phi, soc_ar1_noise : float
         AR(1) SoC dynamics between steps.
 
@@ -153,6 +158,49 @@ class EnvConfig:
         This is a reasoned envelope, not a fitted uncertainty range —
         no empirical basis exists to calibrate it more precisely (see
         participation_model.py module docstring).
+
+    Energy model
+    ------------
+    energy_model : str, "legacy" (default) or "coupled"
+        How the delivered energy per hub per step is computed.
+
+        "legacy" — the model used for every result in paper draft v1:
+            participated_kwh_i = sign(dispatch_i) × n_respond_i × 8 kWh
+            n_respond_i ~ Binomial(n_enrolled_i, ρ)
+          Only the SIGN of the dispatch action matters; its magnitude, the
+          DOE limit and the hub's equipment cap never bound the energy
+          traded. 8 kWh per 5-min step is 96 kW per EV, and responders are
+          drawn from the whole enrolled pool (~20/hub) rather than from the
+          EVs actually plugged in (1–4 chargers/hub). Kept only so v1
+          checkpoints/results can be re-evaluated bit-for-bit.
+
+        "coupled" — energy is bounded by the executed (DOE- and cap-clipped)
+          dispatch AND by the power the responding EVs can physically supply:
+            plugged_in_i  = min(n_connected_i, n_chargers_i)
+            n_respond_i   ~ Binomial(plugged_in_i, ρ)
+            p_ev_i        = min(charger_max_kw_i, headroom_kwh_i / Δt)
+            headroom_kwh_i = ev_battery_kwh × (s̄_i − soc_min)   discharging
+                           = ev_battery_kwh × (soc_max − s̄_i)   charging
+            delivered_kw_i = sign(a_i) × min(|a_i|, n_respond_i × p_ev_i)
+            participated_kwh_i = delivered_kw_i × Δt          (Δt = 5/60 h)
+          where a_i is the clipped dispatch. This makes the DOE bind on the
+          energy actually traded, so a smaller request now genuinely trades
+          less energy (referee comments M1/M4).
+
+          Known limitation (disclose in the paper): the SoC bound is per step
+          and uses the hub's mean SoC. Mean SoC itself follows a mean-reverting
+          AR(1) (φ=0.9 per step, half-life ≈ 6.6 steps ≈ 33 min) plus EV
+          turnover (_update_hub_states), so it recovers toward mean_soc_init
+          within the hour; there is no day-long energy budget
+          and a policy can keep discharging all day. This is not yet storage
+          arbitrage in the strict sense.
+
+          Participation rate (info["rho_hat"], evaluate.py's
+          mean_participation) = responders / pool, where pool is the
+          plugged-in EVs, min(n_connected, n_chargers). Under legacy the pool
+          was the enrolled count, so coupled and legacy rates are not
+          comparable. With 1–4 chargers per hub many hub-steps have zero
+          responders.
     """
     # DOE dynamics
     doe_update_every: int = 6              # steps between DNSP updates (~30 min)
@@ -199,6 +247,17 @@ class EnvConfig:
     # Participation-model domain randomization (see docstring above)
     randomize_participation_params: bool = False
     participation_param_scale_range: tuple = (0.5, 1.5)
+
+    # EV battery (SoC dynamics in both modes; SoC energy bound in coupled mode)
+    ev_battery_kwh: float = 60.0          # was hardcoded in _update_hub_states
+    soc_min: float = 0.20                 # coupled: no discharge below this
+    soc_max: float = 0.95                 # coupled: no charge above this
+
+    # Energy model (see docstring above). "legacy" reproduces draft-v1 results.
+    # Default stays "legacy" so any job queued before this change (sbatch
+    # snapshots the script, then the job git-pulls new code) cannot silently
+    # switch model; new runs must pass energy_model="coupled" explicitly.
+    energy_model: str = "legacy"
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +309,9 @@ class NEMDOEEnv(gym.Env):
     #          queue_length, equipment_cap_kw, rrp, hour, day_of_week]
     NODE_FEATURE_DIM = 9
 
+    # One NEM dispatch interval in hours (5 min).
+    _DT_HR = 5.0 / 60.0
+
     def __init__(
         self,
         hub_configs: list,          # list[HubConfig]
@@ -265,6 +327,11 @@ class NEMDOEEnv(gym.Env):
         self.price_loader = price_loader
         self.participation_model = participation_model
         self.cfg = env_config or EnvConfig()
+        if self.cfg.energy_model not in ("coupled", "legacy"):
+            raise ValueError(
+                f"EnvConfig.energy_model must be 'coupled' or 'legacy', "
+                f"got {self.cfg.energy_model!r}"
+            )
         self._rng = np.random.default_rng(seed)
 
         # --- Action space ---
@@ -510,18 +577,44 @@ class NEMDOEEnv(gym.Env):
         )
 
         # --- Energy actually delivered (kWh per hub, signed) ---
-        # Each responding EV delivers mean_discharge_kwh_per_ev, signed by
-        # direction of clipped dispatch. Charge = negative kWh, discharge = positive.
+        # Charge = negative kWh, discharge = positive. See EnvConfig
+        # "Energy model" for the two modes.
         direction = np.sign(clipped_dispatch_kw)   # -1, 0, or +1
-        participated_kwh = (
-            direction
-            * n_respond
-            * self.cfg.mean_discharge_kwh_per_ev
-        )   # shape (H,), signed kWh
+        if self.cfg.energy_model == "legacy":
+            # Draft-v1 model: magnitude-independent, 8 kWh per responder.
+            participated_kwh = (
+                direction
+                * n_respond
+                * self.cfg.mean_discharge_kwh_per_ev
+            )   # shape (H,), signed kWh
+            delivered_kw = participated_kwh / self._DT_HR
+        else:
+            # Coupled model: energy is bounded by the executed (clipped)
+            # dispatch and by what the responding EVs can physically supply
+            # through their chargers in one interval.
+            charger_kw = np.array(
+                [hc.charger_max_kw for hc in self.hub_configs], dtype=np.float64
+            )
+            # Per-EV energy headroom this step from the hub's mean SoC:
+            # down to soc_min when discharging, up to soc_max when charging.
+            mean_soc = np.array([h.mean_soc for h in self._hub_states])
+            headroom_kwh = self.cfg.ev_battery_kwh * np.where(
+                direction >= 0,
+                np.maximum(mean_soc - self.cfg.soc_min, 0.0),
+                np.maximum(self.cfg.soc_max - mean_soc, 0.0),
+            )
+            per_ev_kw = np.minimum(charger_kw, headroom_kwh / self._DT_HR)
+            deliverable_kw = n_respond * per_ev_kw
+            delivered_kw = direction * np.minimum(
+                np.abs(clipped_dispatch_kw), deliverable_kw
+            )
+            participated_kwh = delivered_kw * self._DT_HR   # signed kWh
 
-        # Empirical participation rate (aggregate, for logging)
-        n_enrolled_total = sum(h.n_enrolled for h in self._hub_states)
-        rho_hat = float(n_respond.sum()) / max(n_enrolled_total, 1)
+        # Empirical participation rate (aggregate, for logging): responders
+        # over the pool that was offered the incentive this step
+        # (enrolled pool in legacy mode, plugged-in EVs in coupled mode).
+        pool_total = sum(ps.n_enrolled for ps in participation_states)
+        rho_hat = float(n_respond.sum()) / max(pool_total, 1)
 
         # --- Reward (master summary §4) ---
         reward, reward_components = self._compute_reward(
@@ -556,7 +649,9 @@ class NEMDOEEnv(gym.Env):
             "incentive_price_per_kwh": incentive_price,
             "clipped_dispatch_kw": clipped_dispatch_kw.tolist(),
             "raw_dispatch_kw": raw_dispatch_kw.tolist(),
+            "delivered_kw": delivered_kw.tolist(),
             "doe_violations_kw": doe_violations_kw.tolist(),
+            "n_pool": [ps.n_enrolled for ps in participation_states],
             "n_respond": n_respond.tolist(),
             "true_probs": true_probs.tolist(),
             "rho_hat": rho_hat,
@@ -779,20 +874,32 @@ class NEMDOEEnv(gym.Env):
         cost term in participation_model.py can compute an anticipated
         per-EV discharge (DOE ceiling / connected EVs) — see
         participation_model.py module docstring, "Degradation term".
+
+        The HubParticipationState.n_enrolled field is the Binomial pool the
+        responders are drawn from. In legacy mode that is the whole enrolled
+        pool; in coupled mode it is the EVs actually plugged in,
+        min(n_connected, n_chargers), which is also used as the degradation
+        divisor (the export ceiling is shared across plugged-in EVs only).
         """
-        return [
-            HubParticipationState(
+        states = []
+        for i, (hub_state, hub_cfg) in enumerate(
+            zip(self._hub_states, self.hub_configs)
+        ):
+            if self.cfg.energy_model == "legacy":
+                pool = hub_state.n_enrolled
+                n_connected = hub_state.n_connected
+            else:
+                pool = min(hub_state.n_connected, hub_cfg.n_chargers)
+                n_connected = pool
+            states.append(HubParticipationState(
                 hub_id=i,
-                n_enrolled=hub_state.n_enrolled,
+                n_enrolled=pool,
                 distance_km=hub_cfg.distance_km,
                 mean_soc=hub_state.mean_soc,
                 doe_export_w=hub_state.doe_export_w,
-                n_connected=hub_state.n_connected,
-            )
-            for i, (hub_state, hub_cfg) in enumerate(
-                zip(self._hub_states, self.hub_configs)
-            )
-        ]
+                n_connected=n_connected,
+            ))
+        return states
 
     def _update_hub_states(self, participated_kwh: np.ndarray) -> None:
         """
@@ -806,9 +913,10 @@ class NEMDOEEnv(gym.Env):
             # SoC update from energy delivered
             if hub_state.n_connected > 0:
                 kwh_per_ev = participated_kwh[i] / max(hub_state.n_connected, 1)
-                # Assume 60 kWh battery; positive kwh (discharge) reduces SoC,
-                # negative kwh (charge) increases SoC.
-                soc_delta = -kwh_per_ev / 60.0
+                # Positive kwh (discharge) reduces SoC, negative (charge)
+                # increases it. ev_battery_kwh defaults to the previous
+                # hardcoded 60 kWh, so legacy results are unchanged.
+                soc_delta = -kwh_per_ev / self.cfg.ev_battery_kwh
                 hub_state.mean_soc = float(np.clip(
                     hub_state.mean_soc + soc_delta, 0.0, 1.0
                 ))

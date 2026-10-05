@@ -5,7 +5,60 @@ through `train_sac_gnn.py --agent {sac_gnn,sac_gcn,sac_flat}`, at both the
 21-hub (`inner_melbourne`) and 32-hub (`greater_melbourne`) scales, plus a
 `lambda_conf` sensitivity sweep.
 
-## Current batch (2026-09-04) — Q1 full-consistency rerun
+## Time limits (`#SBATCH --time`)
+
+Keep requests tight: a shorter request lets the scheduler backfill the job
+into gaps, so it starts sooner. Evaluations finish in about 1 h, so every
+`eval_*`/`evaluate_*` script asks for 2 h. Training limits are set from
+measured speed (`benchmark_train_speed.sh`) with about 30% headroom; until
+that benchmark has run on the vectorised update, `train_coupled_21hub.sh`
+asks for 3 days and `pilot_coupled_lambda.sh` for 12 h. Lower the limit of a
+job that is already pending with
+`scontrol update JobId=<id> TimeLimit=HH:MM:SS` (it can only be lowered).
+
+## Coupled-energy-model batch (2026-10-04) — referee M1/M3/M4 rerun
+
+`EnvConfig.energy_model="coupled"`: delivered energy is
+`sign(a)·min(|a_clipped|, n_respond·p_ev)·Δt`, where `p_ev` is the charger
+rating capped by SoC headroom, and responders are drawn from plugged-in EVs,
+`min(n_connected, n_chargers)`. The draft-v1 model (`sign(a) × n_respond ×
+8 kWh`, responders from the enrolled pool) is `"legacy"`.
+
+**The default is still `legacy`** in `EnvConfig`, `train_sac_gnn.py` and
+`evaluate.py`, because `sbatch` snapshots a script at submission and the job
+then `git pull`s new code — a queued legacy job must not silently switch
+model. New runs pass `--energy_model coupled` explicitly. Every older script
+is also pinned to `--energy_model legacy`. `evaluate.py` checks each
+checkpoint's `config.json` (missing key = legacy) and aborts on an
+energy-model, no-edge-slot or graph mismatch.
+
+**Step 1 — pilot λ first.** Under the coupled model Oracle earns only
+~$0.7–1.0 per step on normal days, so λ=200 $/kW-step is likely far too large.
+
+```
+sbatch --job-name=pilot_lc200 slurm/pilot_coupled_lambda.sh 200
+sbatch --job-name=pilot_lc10  slurm/pilot_coupled_lambda.sh 10
+sbatch --job-name=pilot_lc1   slurm/pilot_coupled_lambda.sh 1
+```
+
+**Step 2 — batch, with the chosen λ** (e.g. 10):
+
+```
+sbatch --job-name=cpl_gnn_s42        slurm/train_coupled_21hub.sh sac_gnn  42 10
+sbatch --job-name=cpl_gcn_s42        slurm/train_coupled_21hub.sh sac_gcn  42 10
+sbatch --job-name=cpl_flat_s42       slurm/train_coupled_21hub.sh sac_flat 42 10
+sbatch --job-name=cpl_gnn_noedge_s42 slurm/train_coupled_21hub.sh sac_gnn  42 10 noedge
+sbatch --job-name=cpl_gcn_noedge_s42 slurm/train_coupled_21hub.sh sac_gcn  42 10 noedge
+# ... repeat for seeds 1 and 2, then per seed:
+sbatch --job-name=eval_cpl_s42       slurm/evaluate_coupled_21hub.sh 42 10
+```
+
+`--results_dir`: `{agent}[_noedge]_21hub_seed{N}_coupled_lc{λ}_20261004`.
+`noedge` = edgeless control (GAT/GCN on a self-loop-only graph): no
+hub-to-hub message passing in the encoder or dispatch head; the price head
+and critics still mean-pool across hubs.
+
+## Previous batch (2026-09-04) — Q1 full-consistency rerun (legacy energy model)
 
 Every checkpoint referenced anywhere in the thesis/paper should come from
 **this** batch, not from `archive_preQ1consistency_20260904/`. This batch

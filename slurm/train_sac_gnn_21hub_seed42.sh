@@ -31,6 +31,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # provenance (exact code state at submission time) is unambiguous
 # relative to any earlier or later run of the same agent/seed/scale.
 python train_sac_gnn.py \
+    --energy_model legacy \
     --agent sac_gnn \
     --episodes 1500 \
     --seed 42 \

@@ -32,6 +32,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # point. Only lc100 and lc400 (genuinely different configurations) are
 # run as separate jobs.
 python train_sac_gnn.py \
+    --energy_model legacy \
     --agent sac_gnn \
     --episodes 1500 \
     --seed 42 \

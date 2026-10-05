@@ -113,6 +113,13 @@ DEFAULT_CONFIG = {
     "randomize_participation": False,
     "participation_scale_range": None,  # e.g. (0.5, 1.5); None => EnvConfig default
 
+    # Energy model (EnvConfig.energy_model): "legacy" (default, draft-v1) or
+    # "coupled" (energy bounded by clipped dispatch, charger power and SoC).
+    "energy_model": "legacy",
+    # Edgeless control (referee M3(ii)): run the GAT/GCN encoder on a
+    # self-loop-only graph — shared per-hub weights, no message passing.
+    "no_edges": False,
+
     # SAC hyperparameters
     "gamma": 0.99,
     "tau": 0.005,
@@ -212,6 +219,21 @@ def parse_args():
              "--randomize_participation is also set. Defaults to "
              "EnvConfig.participation_param_scale_range (0.5, 1.5) if unset.",
     )
+    parser.add_argument(
+        "--energy_model", type=str, default="legacy",
+        choices=["coupled", "legacy"],
+        help="EnvConfig.energy_model. 'legacy' (default): draft-v1 model "
+             "(sign of dispatch x responders x 8 kWh). 'coupled': delivered "
+             "energy bounded by the DOE/cap-clipped dispatch, the responding "
+             "EVs' charger power and their SoC headroom. New runs should pass "
+             "--energy_model coupled explicitly.",
+    )
+    parser.add_argument(
+        "--no_edges", action="store_true",
+        help="Edgeless control: run the sac_gnn/sac_gcn encoder on a "
+             "self-loop-only graph (shared per-hub weights, no inter-hub "
+             "message passing). Not valid with --agent sac_flat.",
+    )
     parser.add_argument("--no_eval", action="store_true",
                         help="Skip evaluation runs (faster, less informative)")
     return parser.parse_args()
@@ -286,7 +308,9 @@ def make_env(cfg: dict, split: str = "train", seed: int = 42) -> NEMDOEEnv:
         seed=seed,
     )
 
-    env_config_kwargs = {}
+    env_config_kwargs = {"energy_model": cfg.get("energy_model", "coupled")}
+    if cfg.get("no_edges"):
+        graph = graph.self_loops_only()
     if cfg.get("lambda_conf") is not None:
         env_config_kwargs["lambda_conformance"] = cfg["lambda_conf"]
         logger.info(
@@ -929,9 +953,22 @@ if __name__ == "__main__":
     cfg["randomize_participation"] = args.randomize_participation
     if args.participation_scale_range is not None:
         cfg["participation_scale_range"] = tuple(args.participation_scale_range)
+    cfg["energy_model"] = args.energy_model
+    if args.no_edges and args.agent == "sac_flat":
+        raise SystemExit("--no_edges applies to sac_gnn/sac_gcn only (sac_flat has no graph).")
+    cfg["no_edges"] = args.no_edges
+    logger.info(f"Energy model: {cfg['energy_model']}; no_edges: {cfg['no_edges']}")
 
-    # Set seeds for reproducibility
+    # Set seeds for reproducibility. torch was previously never seeded, so
+    # network initialisation and SAC action sampling differed between runs
+    # with the same --seed (runs up to the 20260904 batch are affected).
+    # GPU kernels can still be nondeterministic; this fixes the init/sampling.
     np.random.seed(cfg["seed"])
+    try:
+        import torch
+        torch.manual_seed(cfg["seed"])
+    except ImportError:
+        pass
 
     start_ep = args.start_episode or 1
     results = train(cfg, resume_path=args.resume, no_eval=args.no_eval, start_episode=start_ep)

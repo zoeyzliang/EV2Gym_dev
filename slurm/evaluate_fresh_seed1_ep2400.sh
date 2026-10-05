@@ -7,7 +7,7 @@
 #SBATCH --constraint=L40S
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
-#SBATCH --time=18:00:00
+#SBATCH --time=02:00:00
 #SBATCH --output=/scratch2/fr57/zlia0072/ev2gym_training/logs/slurm_%j_eval_fresh_s1_episode_2400.out
 #SBATCH --error=/scratch2/fr57/zlia0072/ev2gym_training/logs/slurm_%j_eval_fresh_s1_episode_2400.err
 
@@ -32,6 +32,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # 1500-episode seed 1 checkpoint (matched comparison point). SAC-Flat points at a
 # nonexistent path (never trained at 32-hub scale) and is skipped with a warning.
 python evaluate.py \
+    --energy_model legacy \
     --sac_gnn_checkpoint /scratch2/fr57/zlia0072/ev2gym_training/results/sac_gnn_32hub_seed1_20260904_fresh2500/checkpoints/episode_2400.pt \
     --sac_gcn_checkpoint /scratch2/fr57/zlia0072/ev2gym_training/results/sac_gcn_32hub_seed1_20260904/checkpoints/best.pt \
     --sac_flat_checkpoint /scratch2/fr57/zlia0072/ev2gym_training/results/_no_such_checkpoint/best.pt \

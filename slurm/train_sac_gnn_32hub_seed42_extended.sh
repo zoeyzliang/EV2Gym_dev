@@ -40,6 +40,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # --start_episode omitted deliberately: inferred automatically from the
 # checkpoint, avoiding a hardcoded episode number that could be wrong.
 python train_sac_gnn.py \
+    --energy_model legacy \
     --agent sac_gnn \
     --zone greater_melbourne \
     --seed 42 \

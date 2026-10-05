@@ -41,6 +41,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # (_fresh2500) from both the original (_20260904) and resumed
 # (_extended2500) runs, so none of the three can collide.
 python train_sac_gnn.py \
+    --energy_model legacy \
     --agent sac_gnn \
     --zone greater_melbourne \
     --seed 1 \

@@ -23,6 +23,21 @@ from nem_env.nem_doe_env import NEMDOEEnv
 from nem_env.participation_model import ParticipationModel
 
 
+def expected_delivered_kw(pool, probs, limit_kw, per_ev_kw):
+    """
+    Exact E[min(limit_kw, N · per_ev_kw)] per hub, N ~ Binomial(pool, probs).
+
+    All arguments are (H,) arrays. Sums over the Binomial pmf (pool is at
+    most a few chargers per hub, so this is cheap).
+    """
+    from scipy.stats import binom
+    pool = np.asarray(pool, dtype=int)
+    k = np.arange(int(pool.max(initial=0)) + 1)[:, None]          # (K+1, 1)
+    pmf = binom.pmf(k, pool[None, :], np.asarray(probs)[None, :])  # (K+1, H)
+    return (pmf * np.minimum(np.asarray(limit_kw)[None, :],
+                             k * np.asarray(per_ev_kw)[None, :])).sum(0)
+
+
 class OracleMPCBaseline:
     """
     One-step lookahead MPC with oracle access to participation model.
@@ -66,7 +81,89 @@ class OracleMPCBaseline:
         """
         Select action maximising expected one-step reward.
 
-        Uses obs_to_node_features() — no zone features (RRP in node [6]).
+        Dispatches on env.cfg.energy_model so Oracle always evaluates the
+        same energy model the environment actually uses.
+        """
+        if env.cfg.energy_model == "legacy":
+            return self._select_action_legacy(obs, env)
+        return self._select_action_coupled(obs, env)
+
+    def _select_action_coupled(self, obs: np.ndarray, env: NEMDOEEnv) -> np.ndarray:
+        """
+        One-step expected-reward maximisation under the coupled energy model
+        (see EnvConfig "Energy model" in nem_doe_env.py).
+
+        For each incentive price c on the grid, and each hub i:
+          pool_i  = min(n_connected_i, n_chargers_i)      (same pool as env)
+          N_i     ~ Binomial(pool_i, ρ_i(c))
+          E_dir   = Δt · E[min(L_dir, N_i · p_dir,i)]       (exact, via pmf)
+        where L_dir is the DOE/cap-clipped limit for that direction and
+        p_dir,i the per-EV power (charger rating, capped by SoC headroom /
+        Δt exactly as in the env). Each hub
+        then takes whichever of discharge / charge / idle has the highest
+        expected value, (±RRP/1000 − c) · E_dir, and the price with the
+        highest network total is chosen. Still myopic (one step), so this is
+        an informed baseline, not an upper bound on the intertemporal problem.
+        """
+        node_feats = env.obs_to_node_features(obs)  # (H, 9)
+        doe_import_kw = node_feats[:, 0] * env.cfg.doe_normalise_by_w / 1000.0
+        doe_export_kw = node_feats[:, 1] * env.cfg.doe_normalise_by_w / 1000.0
+        n_connected   = node_feats[:, 2].astype(int)
+        mean_socs     = node_feats[:, 3]
+        equipment_caps = node_feats[:, 5]
+        rrp = float(node_feats[0, 6]) * env.cfg.rrp_clip_high   # $/MWh
+
+        eff_discharge_kw = np.minimum(doe_export_kw, equipment_caps)
+        eff_charge_kw    = np.minimum(doe_import_kw, equipment_caps)
+
+        n_chargers = np.array([hc.n_chargers for hc in env.hub_configs], dtype=int)
+        charger_kw = np.array([hc.charger_max_kw for hc in env.hub_configs], dtype=float)
+        pool = np.minimum(n_connected, n_chargers)                # (H,)
+        dt_hr = 5.0 / 60.0
+
+        # Per-EV power per direction, including the env's SoC headroom bound
+        batt = env.cfg.ev_battery_kwh
+        per_ev_dis_kw = np.minimum(
+            charger_kw, batt * np.maximum(mean_socs - env.cfg.soc_min, 0.0) / dt_hr)
+        per_ev_chg_kw = np.minimum(
+            charger_kw, batt * np.maximum(env.cfg.soc_max - mean_socs, 0.0) / dt_hr)
+
+        best_action = None
+        best_expected_reward = -np.inf
+        price_grid = np.linspace(self.price_min, self.price_max, self.n_price_grid)
+
+        for c in price_grid:
+            probs = self.model.participation_prob_vector(
+                c_t=c * 1000.0,   # $/kWh → $/MWh for participation model
+                distances_km=self.hub_distances,
+                mean_socs=mean_socs,
+                doe_export_ws=node_feats[:, 1] * env.cfg.doe_normalise_by_w,  # W
+                n_connecteds=pool,
+            )
+            e_dis_kwh = dt_hr * expected_delivered_kw(pool, probs, eff_discharge_kw, per_ev_dis_kw)
+            e_chg_kwh = dt_hr * expected_delivered_kw(pool, probs, eff_charge_kw, per_ev_chg_kw)
+
+            v_dis = (rrp / 1000.0 - c) * e_dis_kwh
+            v_chg = (-rrp / 1000.0 - c) * e_chg_kwh
+            dispatch_kw = np.where(
+                (v_dis >= v_chg) & (v_dis > 0), eff_discharge_kw,
+                np.where(v_chg > 0, -eff_charge_kw, 0.0),
+            )
+            expected_r = float(np.maximum(np.maximum(v_dis, v_chg), 0.0).sum())
+
+            if expected_r > best_expected_reward:
+                best_expected_reward = expected_r
+                best_action = np.append(dispatch_kw, c).astype(np.float32)
+
+        return best_action
+
+    def _select_action_legacy(self, obs: np.ndarray, env: NEMDOEEnv) -> np.ndarray:
+        """
+        Draft-v1 Oracle, kept unchanged for energy_model="legacy" so v1
+        results reproduce exactly. Known issues (fixed in the coupled path):
+        uses n_connected as the Binomial pool while the legacy env draws
+        from n_enrolled, and uses a fixed discharge/charge rule rather than
+        a per-hub expected-value comparison.
         """
         node_feats = env.obs_to_node_features(obs)  # (H, 9)
 

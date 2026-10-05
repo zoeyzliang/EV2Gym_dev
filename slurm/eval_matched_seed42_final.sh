@@ -7,7 +7,7 @@
 #SBATCH --constraint=L40S
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
-#SBATCH --time=12:00:00
+#SBATCH --time=02:00:00
 #SBATCH --output=/scratch2/fr57/zlia0072/ev2gym_training/logs/slurm_%j_extended_seed42_gcnvgnn_final.out
 #SBATCH --error=/scratch2/fr57/zlia0072/ev2gym_training/logs/slurm_%j_extended_seed42_gcnvgnn_final.err
 
@@ -32,6 +32,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # SAC-Flat intentionally points at a nonexistent path (never trained at
 # 32-hub scale) -- skipped gracefully with a warning.
 python evaluate.py \
+    --energy_model legacy \
     --sac_gnn_checkpoint /scratch2/fr57/zlia0072/ev2gym_training/results/sac_gnn_32hub_seed42_20260904_extended2500_v2/checkpoints/final.pt \
     --sac_gcn_checkpoint /scratch2/fr57/zlia0072/ev2gym_training/results/sac_gcn_32hub_seed42_20260904_extended2500/checkpoints/final.pt \
     --sac_flat_checkpoint /scratch2/fr57/zlia0072/ev2gym_training/results/_no_such_checkpoint/best.pt \

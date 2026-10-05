@@ -234,6 +234,30 @@ def parse_args():
     parser.add_argument(
         "--graph_path", type=str, default="data/graphs/inner_melbourne.pkl",
     )
+    parser.add_argument(
+        "--energy_model", type=str, default="legacy",
+        choices=["coupled", "legacy"],
+        help="EnvConfig.energy_model (default 'legacy'). Must match the model "
+             "the checkpoints were trained under: 'legacy' for every draft-v1 "
+             "(20260904 batch) checkpoint, 'coupled' for runs trained after "
+             "the energy-model fix. Checked against each checkpoint's "
+             "config.json; a mismatch aborts the run.",
+    )
+    parser.add_argument(
+        "--skip_config_check", action="store_true",
+        help="Evaluate even if a checkpoint's config.json is missing or "
+             "disagrees with --energy_model / its no-edge slot. Debug only.",
+    )
+    parser.add_argument(
+        "--sac_gnn_noedge_checkpoint", type=str, default=None,
+        help="Optional SAC-GNN checkpoint trained with --no_edges; evaluated "
+             "on a self-loop-only graph as agent 'SAC-GNN-NoEdge'.",
+    )
+    parser.add_argument(
+        "--sac_gcn_noedge_checkpoint", type=str, default=None,
+        help="Optional SAC-GCN checkpoint trained with --no_edges; evaluated "
+             "on a self-loop-only graph as agent 'SAC-GCN-NoEdge'.",
+    )
     return parser.parse_args()
 
 
@@ -269,9 +293,10 @@ def make_eval_env(args, seed: int) -> tuple:
         hub_configs=hub_configs,
         price_loader=loader,
         participation_model=model,
-        env_config=EnvConfig(),
+        env_config=EnvConfig(energy_model=getattr(args, "energy_model", "legacy")),
         seed=seed,
     )
+    logger.info(f"Eval env energy model: {env.cfg.energy_model}")
 
     return env, graph, hub_configs
 
@@ -279,6 +304,56 @@ def make_eval_env(args, seed: int) -> tuple:
 # ---------------------------------------------------------------------------
 # Agent loader
 # ---------------------------------------------------------------------------
+
+def check_checkpoint_config(ckpt_path: str, args, expect_no_edges: bool) -> None:
+    """
+    Refuse to evaluate a checkpoint under a different environment/graph than
+    it was trained on.
+
+    Reads <run_dir>/config.json (checkpoints live in <run_dir>/checkpoints/).
+    A missing energy_model key — or a missing config.json — is treated as
+    "legacy", since every run that predates the key used the legacy model.
+    Aborts on any mismatch unless --skip_config_check is set.
+    """
+    cfg_path = Path(ckpt_path).parent.parent / "config.json"
+    if cfg_path.exists():
+        with open(cfg_path) as f:
+            cfg = json.load(f)
+    else:
+        logger.warning(
+            f"No config.json next to {ckpt_path}; assuming energy_model=legacy, "
+            "no_edges=False and an unknown graph."
+        )
+        cfg = {}
+
+    problems = []
+    trained_model = cfg.get("energy_model", "legacy")
+    eval_model = getattr(args, "energy_model", "legacy")
+    if trained_model != eval_model:
+        problems.append(
+            f"trained with energy_model={trained_model!r}, "
+            f"evaluating with --energy_model {eval_model!r}"
+        )
+    trained_no_edges = bool(cfg.get("no_edges", False))
+    if trained_no_edges != expect_no_edges:
+        problems.append(
+            f"trained with no_edges={trained_no_edges}, but passed to the "
+            f"{'no-edge' if expect_no_edges else 'full-graph'} checkpoint slot"
+        )
+    trained_graph = cfg.get("graph_path")
+    if trained_graph and Path(trained_graph).name != Path(args.graph_path).name:
+        problems.append(
+            f"trained on graph {Path(trained_graph).name}, "
+            f"evaluating on {Path(args.graph_path).name}"
+        )
+
+    if problems:
+        msg = f"Checkpoint/config mismatch for {ckpt_path}: " + "; ".join(problems)
+        if getattr(args, "skip_config_check", False):
+            logger.warning(msg + " (continuing: --skip_config_check)")
+        else:
+            raise SystemExit(msg)
+
 
 def load_agents(args, env, graph, hub_configs) -> list:
     """
@@ -302,6 +377,7 @@ def load_agents(args, env, graph, hub_configs) -> list:
             n_hubs=n_hubs, graph_data=graph,
             obs_dim=obs_dim, net_cfg=net_cfg, seed=args.seed,
         )
+        check_checkpoint_config(args.sac_gnn_checkpoint, args, expect_no_edges=False)
         agent.load(args.sac_gnn_checkpoint)
         agents.append(("SAC-GNN", agent, False))
         logger.info(f"✓ SAC-GNN loaded from {args.sac_gnn_checkpoint}")
@@ -314,6 +390,7 @@ def load_agents(args, env, graph, hub_configs) -> list:
             n_hubs=n_hubs, graph_data=graph,
             obs_dim=obs_dim, net_cfg=net_cfg, seed=args.seed,
         )
+        check_checkpoint_config(args.sac_gcn_checkpoint, args, expect_no_edges=False)
         agent.load(args.sac_gcn_checkpoint)
         agents.append(("SAC-GCN", agent, False))
         logger.info(f"✓ SAC-GCN loaded from {args.sac_gcn_checkpoint}")
@@ -323,11 +400,33 @@ def load_agents(args, env, graph, hub_configs) -> list:
     # 3. SAC-Flat ablation
     if Path(args.sac_flat_checkpoint).exists():
         agent = SACFlatAgent(obs_dim=obs_dim, action_dim=action_dim, seed=args.seed)
+        check_checkpoint_config(args.sac_flat_checkpoint, args, expect_no_edges=False)
         agent.load(args.sac_flat_checkpoint)
         agents.append(("SAC-Flat", agent, False))
         logger.info(f"✓ SAC-Flat loaded from {args.sac_flat_checkpoint}")
     else:
         logger.warning(f"SAC-Flat checkpoint not found: {args.sac_flat_checkpoint}")
+
+    # 3b. Edgeless controls (optional): same encoders on a self-loop-only
+    # graph. Must be evaluated on the same edgeless graph they trained on.
+    noedge_graph = graph.self_loops_only()
+    for name, cls, ckpt in [
+        ("SAC-GNN-NoEdge", SACGNNAgent, getattr(args, "sac_gnn_noedge_checkpoint", None)),
+        ("SAC-GCN-NoEdge", SACGCNAgent, getattr(args, "sac_gcn_noedge_checkpoint", None)),
+    ]:
+        if ckpt is None:
+            continue
+        if Path(ckpt).exists():
+            agent = cls(
+                n_hubs=n_hubs, graph_data=noedge_graph,
+                obs_dim=obs_dim, net_cfg=net_cfg, seed=args.seed,
+            )
+            check_checkpoint_config(ckpt, args, expect_no_edges=True)
+            agent.load(ckpt)
+            agents.append((name, agent, False))
+            logger.info(f"✓ {name} loaded from {ckpt}")
+        else:
+            logger.warning(f"{name} checkpoint not found: {ckpt}")
 
     # 4. Greedy dispatch heuristic (no checkpoint)
     greedy = GreedyDispatchBaseline(n_hubs=n_hubs)

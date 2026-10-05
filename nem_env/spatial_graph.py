@@ -241,6 +241,29 @@ class GraphData:
             edge_attr=torch.tensor(self.edge_attr, dtype=torch.float32),
         )
 
+    def self_loops_only(self) -> "GraphData":
+        """
+        Copy of this graph with every inter-hub edge removed, keeping only
+        i→i self-loops.
+
+        Used for the edgeless control (referee comment M3(ii)): a GAT/GCN
+        run on this graph keeps the per-node shared weights but passes no
+        messages between hubs, so it separates "weight sharing across hubs"
+        from "message passing over the hub graph". GATConv/GCNConv drop or
+        de-duplicate existing self-loops before adding their own, so passing
+        explicit self-loops is equivalent to passing no edges.
+        """
+        idx = np.arange(self.n_nodes, dtype=np.int64)
+        return GraphData(
+            x=self.x,
+            edge_index=np.stack([idx, idx]),
+            edge_attr=np.zeros((self.n_nodes, 1), dtype=np.float32),
+            hub_ids=self.hub_ids,
+            n_nodes=self.n_nodes,
+            n_edges=self.n_nodes,
+            zone_name=f"{self.zone_name}_self_loops_only",
+        )
+
 
 # ---------------------------------------------------------------------------
 # HubConfig import (avoid circular import — redefine the minimal fields here

@@ -48,6 +48,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # if both happen to start. Whichever job starts running first should
 # be kept; cancel the other at that point.
 python train_sac_gnn.py \
+    --energy_model legacy \
     --agent sac_gnn \
     --episodes 1500 \
     --seed 42 \

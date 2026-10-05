@@ -310,14 +310,25 @@ class SACGNNAgent:
 
         if self._use_torch:
             import torch
-            with torch.no_grad():
-                node_t = torch.tensor(
-                    node_feats, dtype=torch.float32, device=self.device
-                )
-                action, _ = self.actor(
-                    node_t, self._edge_index_t,
-                    deterministic=deterministic,
-                )
+            # Deterministic (evaluation) actions must run with dropout off.
+            # Previously the actor was never switched to eval mode, so the
+            # encoder's dropout (p=0.1) stayed active and "deterministic"
+            # actions varied between calls (up to ~6 kW std on a 5-episode
+            # checkpoint) — noise SAC-Flat (no dropout) did not get.
+            was_training = self.actor.training
+            if deterministic:
+                self.actor.eval()
+            try:
+                with torch.no_grad():
+                    node_t = torch.tensor(
+                        node_feats, dtype=torch.float32, device=self.device
+                    )
+                    action, _ = self.actor(
+                        node_t, self._edge_index_t,
+                        deterministic=deterministic,
+                    )
+            finally:
+                self.actor.train(was_training)
             action = action.cpu().numpy()
         else:
             # Numpy fallback: always deterministic (no reparameterisation)
@@ -486,12 +497,17 @@ class SACGNNAgent:
 
         # --- Step 2: Actor update ---
         new_actions, log_probs = self._batch_actor_forward(obs_t)
-        q1_pi = self._batch_critic_forward(
-            self.critic1, curr_node, new_actions
-        )
-        q2_pi = self._batch_critic_forward(
-            self.critic2, curr_node, new_actions
-        )
+        # The critic's state embedding does not depend on the action, and
+        # the actor loss only needs gradients w.r.t. the action, so the
+        # (post-update) critic encoders run without autograd here. Values
+        # and actor gradients are identical to tracking them; it just skips
+        # two encoder backward passes whose critic grads were discarded
+        # (critic optimisers zero_grad before their next step).
+        with torch.no_grad():
+            h1 = self._encode_batch(self.critic1.encoder, curr_node).mean(dim=1)
+            h2 = self._encode_batch(self.critic2.encoder, curr_node).mean(dim=1)
+        q1_pi = self.critic1.mlp(torch.cat([h1, new_actions], dim=-1))
+        q2_pi = self.critic2.mlp(torch.cat([h2, new_actions], dim=-1))
         q_pi = torch.min(q1_pi, q2_pi)
 
         # Actor loss: minimise (α log π - Q)
@@ -540,33 +556,47 @@ class SACGNNAgent:
     # Batched forward passes (process full minibatch efficiently)
     # ------------------------------------------------------------------
 
-    def _batch_actor_forward(self, obs_batch):
+    def _batched_edge_index(self, B: int):
         """
-        Run actor forward pass on a full minibatch using PyG batching.
+        edge_index for B disconnected copies of the (static) hub graph,
+        i.e. copy b's node i is node b*H + i. Identical to what
+        torch_geometric's Batch.from_data_list produces, but built once per
+        batch size and cached instead of rebuilt from B Data objects on
+        every forward pass (that rebuild was ~15% of update time).
+        """
+        import torch
+        cache = self.__dict__.setdefault("_edge_index_cache", {})
+        ei = cache.get(B)
+        if ei is None:
+            E = self._edge_index_t.shape[1]
+            offsets = (torch.arange(B, device=self._edge_index_t.device) * self.n_hubs)
+            ei = (self._edge_index_t.unsqueeze(0) + offsets.view(B, 1, 1))   # (B, 2, E)
+            ei = ei.permute(1, 0, 2).reshape(2, B * E)
+            cache[B] = ei
+        return ei
 
-        Constructs a single large graph where each sample in the batch
-        is a disconnected copy of the hub graph. PyG's Batch.from_data_list
-        handles edge_index offsets automatically, so the GAT encoder runs
-        as one forward pass over B×H nodes instead of B sequential calls.
-        This is ~B× faster than the sequential version (256× for batch=256).
+    def _encode_batch(self, encoder, node_batch):
+        """Run a graph encoder over a (B, H, F) minibatch -> (B, H, embed_dim)."""
+        B = node_batch.shape[0]
+        x = node_batch.reshape(B * self.n_hubs, -1)
+        h = encoder(x, self._batched_edge_index(B))   # (B*H, embed_dim)
+        return h.view(B, self.n_hubs, -1)
+
+    def _batch_actor_forward(self, obs_batch, dispatch_eps=None, price_eps=None):
+        """
+        Run the actor on a full minibatch: one batched encoder call over
+        B×H nodes, then the dispatch/price heads applied to the whole batch.
+
+        Previously the heads ran in a Python loop over the B samples, which
+        made the update dominated by small-op overhead (and kernel launches
+        on GPU). The maths is unchanged; dispatch_eps (B, H) and price_eps
+        (B,) can be passed explicitly to check equivalence in tests.
         """
         import torch
         import math
-        from torch_geometric.data import Data, Batch as PyGBatch
 
-        B = obs_batch.shape[0]
-        node_batch = self._batch_split_obs(obs_batch)  # (B, H, 9)
-
-        # Build batched PyG graph — one disconnected copy per sample
-        data_list = [
-            Data(x=node_batch[i], edge_index=self._edge_index_t)
-            for i in range(B)
-        ]
-        pyg_batch = PyGBatch.from_data_list(data_list)
-
-        # Single batched GAT encoder call
-        h = self.actor.encoder(pyg_batch.x, pyg_batch.edge_index)  # (B*H, embed_dim)
-        h = h.view(B, self.n_hubs, -1)                              # (B, H, embed_dim)
+        node_batch = self._batch_split_obs(obs_batch)          # (B, H, 9)
+        h = self._encode_batch(self.actor.encoder, node_batch)  # (B, H, embed_dim)
 
         caps = torch.full(
             (self.n_hubs,), self.net_cfg.equipment_cap_kw,
@@ -575,78 +605,59 @@ class SACGNNAgent:
         price_mid = (self.net_cfg.price_max + self.net_cfg.price_min) / 2
         price_range = (self.net_cfg.price_max - self.net_cfg.price_min) / 2
 
-        actions_list = []
-        log_probs_list = []
+        # Dispatch head (per hub)
+        dispatch_out = self.actor.dispatch_head(h)                # (B, H, 2)
+        dispatch_mean = dispatch_out[..., 0]
+        dispatch_log_std = dispatch_out[..., 1].clamp(
+            self.actor.log_std_min, self.actor.log_std_max
+        )
+        # Price head (mean-pooled)
+        price_out = self.actor.price_head(h.mean(dim=1))          # (B, 2)
+        price_mean = price_out[:, 0]
+        price_log_std = price_out[:, 1].clamp(
+            self.actor.log_std_min, self.actor.log_std_max
+        )
 
-        for i in range(B):
-            # Dispatch head
-            dispatch_out = self.actor.dispatch_head(h[i])       # (H, 2)
-            dispatch_mean = dispatch_out[:, 0]
-            dispatch_log_std = dispatch_out[:, 1].clamp(
-                self.actor.log_std_min, self.actor.log_std_max
-            )
-            # Price head
-            h_mean_i = h[i].mean(dim=0)                         # (embed_dim,)
-            price_out = self.actor.price_head(h_mean_i)         # (2,)
-            price_mean = price_out[0]
-            price_log_std = price_out[1].clamp(
-                self.actor.log_std_min, self.actor.log_std_max
-            )
-
-            # Reparameterisation
+        # Reparameterisation
+        if dispatch_eps is None:
             dispatch_eps = torch.randn_like(dispatch_mean)
-            dispatch_pre = dispatch_mean + dispatch_log_std.exp() * dispatch_eps
-            tanh_d = torch.tanh(dispatch_pre)
-            dispatch_kw = caps * tanh_d
+        dispatch_pre = dispatch_mean + dispatch_log_std.exp() * dispatch_eps
+        tanh_d = torch.tanh(dispatch_pre)
+        dispatch_kw = caps * tanh_d                               # (B, H)
 
+        if price_eps is None:
             price_eps = torch.randn_like(price_mean)
-            price_pre = price_mean + price_log_std.exp() * price_eps
-            tanh_p = torch.tanh(price_pre)
-            price = price_mid + price_range * tanh_p
+        price_pre = price_mean + price_log_std.exp() * price_eps
+        tanh_p = torch.tanh(price_pre)
+        price = price_mid + price_range * tanh_p                  # (B,)
 
-            action = torch.cat([dispatch_kw, price.unsqueeze(0)])
+        actions = torch.cat([dispatch_kw, price.unsqueeze(1)], dim=1)   # (B, H+1)
 
-            # Log prob with tanh correction
-            log_prob = (
-                -0.5 * dispatch_eps ** 2
-                - dispatch_log_std
-                - 0.5 * math.log(2 * math.pi)
-                - torch.log(1 - tanh_d ** 2 + 1e-6)
-                - torch.log(caps + 1e-6)
-            ).sum() + (
-                -0.5 * price_eps ** 2
-                - price_log_std
-                - 0.5 * math.log(2 * math.pi)
-                - torch.log(1 - tanh_p ** 2 + 1e-6)
-                - math.log(price_range)
-            )
+        # Log prob with tanh correction
+        log_probs = (
+            -0.5 * dispatch_eps ** 2
+            - dispatch_log_std
+            - 0.5 * math.log(2 * math.pi)
+            - torch.log(1 - tanh_d ** 2 + 1e-6)
+            - torch.log(caps + 1e-6)
+        ).sum(dim=1) + (
+            -0.5 * price_eps ** 2
+            - price_log_std
+            - 0.5 * math.log(2 * math.pi)
+            - torch.log(1 - tanh_p ** 2 + 1e-6)
+            - math.log(price_range)
+        )
 
-            actions_list.append(action)
-            log_probs_list.append(log_prob)
-
-        return torch.stack(actions_list), torch.stack(log_probs_list)
+        return actions, log_probs
 
     def _batch_critic_forward(self, critic, node_batch, action_batch):
         """
-        Run critic on a full minibatch using PyG batching.
-
-        Single batched GAT encoder call over B×H nodes, then a single
-        batched MLP call. No Python loop — pure tensor operations.
+        Run critic on a full minibatch: one batched encoder call over B×H
+        nodes, then a single batched MLP call. No Python loop.
         """
         import torch
-        from torch_geometric.data import Data, Batch as PyGBatch
 
-        B = node_batch.shape[0]
-
-        data_list = [
-            Data(x=node_batch[i], edge_index=self._edge_index_t)
-            for i in range(B)
-        ]
-        pyg_batch = PyGBatch.from_data_list(data_list)
-
-        # Single batched GAT encoder call
-        h = critic.encoder(pyg_batch.x, pyg_batch.edge_index)  # (B*H, embed_dim)
-        h = h.view(B, self.n_hubs, -1)                          # (B, H, embed_dim)
+        h = self._encode_batch(critic.encoder, node_batch)       # (B, H, embed_dim)
         h_mean = h.mean(dim=1)                                   # (B, embed_dim)
 
         # Batched MLP — no loop

@@ -7,7 +7,7 @@
 #SBATCH --constraint=L40S
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
-#SBATCH --time=18:00:00
+#SBATCH --time=02:00:00
 #SBATCH --output=/scratch2/fr57/zlia0072/ev2gym_training/logs/slurm_%j_eval_21h_s42.out
 #SBATCH --error=/scratch2/fr57/zlia0072/ev2gym_training/logs/slurm_%j_eval_21h_s42.err
 
@@ -30,6 +30,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # EV participation degradation, CUDA allocator). n_runs=100 matches
 # Orfanoudakis et al. 2025's precedent for the flagship result.
 python evaluate.py \
+    --energy_model legacy \
     --sac_gnn_checkpoint /scratch2/fr57/zlia0072/ev2gym_training/results/sac_gnn_21hub_seed42_20260904/checkpoints/best.pt \
     --sac_gcn_checkpoint /scratch2/fr57/zlia0072/ev2gym_training/results/sac_gcn_21hub_seed42_20260904/checkpoints/best.pt \
     --sac_flat_checkpoint /scratch2/fr57/zlia0072/ev2gym_training/results/sac_flat_21hub_seed42_20260904/checkpoints/best.pt \
