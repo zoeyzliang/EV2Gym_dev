@@ -511,6 +511,10 @@ assert not _overlap, (
 STRESS_TEST_DAY_INDEX = 2
 
 
+# Base seed for the feeder env's validation resets (see evaluate()).
+VALIDATION_SEED = 7_000
+
+
 def evaluate(
     agent: SACGNNAgent,
     eval_env: NEMDOEEnv,
@@ -567,8 +571,19 @@ def evaluate(
     # If n_episodes > 5, pad with random days
     n_random = max(0, n_episodes - len(FIXED_EVAL_DAYS))
 
+    # Feeder env: reset every validation day with a fixed seed, so each
+    # validation call faces identical arrivals, opt-ins and forecast errors
+    # and best.pt is chosen by policy quality rather than by a lucky draw
+    # (an unseeded reset continues the env's random stream: a fixed policy
+    # scored 145 / 168 / 145 kW of violation on three consecutive calls).
+    # The legacy env keeps its original unseeded behaviour (v1 runs).
+    seeded = hasattr(eval_env, "feeder")
+
     for i, date in enumerate(eval_dates):
-        obs, reset_info = eval_env.reset(options={"date": date})
+        if seeded:
+            obs, reset_info = eval_env.reset(seed=VALIDATION_SEED + i, options={"date": date})
+        else:
+            obs, reset_info = eval_env.reset(options={"date": date})
         realized_participation = reset_info.get("participation_params", {})
         done = False
         ep_reward = 0.0
@@ -599,9 +614,9 @@ def evaluate(
             "participation_gamma": realized_participation.get("gamma"),
         })
 
-    # Pad with random days if needed
-    for _ in range(n_random):
-        obs, _ = eval_env.reset()
+    # Pad with random days if needed (random dates; seeded realisations for the feeder env)
+    for k in range(n_random):
+        obs, _ = eval_env.reset(seed=VALIDATION_SEED + len(eval_dates) + k) if seeded else eval_env.reset()
         done = False
         ep_reward = 0.0
         total_rho_hat = 0.0
