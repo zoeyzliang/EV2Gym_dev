@@ -149,7 +149,7 @@ class HubSessions:
         arriving = free[self.rng.random(len(free)) < self.arrival_prob(ts)]
         n = len(arriving)
         if n == 0:
-            return {"arrivals": 0, "opt_in": 0}
+            return {"arrivals": 0, "opt_in": 0, "capped": 0, "capped_kwh": 0.0}
         d = self.data
         half = f"{ts.hour:02d}:{0 if ts.minute < 30 else 30:02d}"
         k = self.rng.choice(len(d.ev_names), size=n, p=d.ev_p)
@@ -160,7 +160,16 @@ class HubSessions:
         stay = np.maximum(self.cfg.min_stay_steps, np.round(stay_h * 60 / 5).astype(int))
 
         e_arr = np.clip(cap - demand, 0.1 * cap, 0.9 * cap)
-        target = np.minimum(cap, e_arr + demand)
+        requested = np.minimum(cap, e_arr + demand)
+        # Demand and dwell are sampled independently (as in EV2Gym), so some
+        # owners would ask for more than their charger can deliver during the
+        # stay. Cap the target at the deliverable energy: full power for every
+        # step after arrival (a new participant is idle in its arrival step).
+        # Without this, every policy is penalised for an unavoidable shortfall.
+        p_ch = np.minimum(d.ev_pch[k], self.port_kw[arriving])
+        deliverable = e_arr + p_ch * self.cfg.eta * self.cfg.dt_hr * np.maximum(stay - 1, 0)
+        target = np.minimum(requested, deliverable)
+        capped = target < requested - 1e-9
 
         # One-off opt-in decision at the offered incentive (spec §4.5).
         hubs = self.port_hub[arriving]
@@ -180,10 +189,11 @@ class HubSessions:
         self.cap[arriving] = cap
         self.E[arriving] = e_arr
         self.target[arriving] = target
-        self.p_ch[arriving] = np.minimum(d.ev_pch[k], self.port_kw[arriving])
+        self.p_ch[arriving] = p_ch
         self.p_dis[arriving] = np.minimum(d.ev_pdis[k], self.port_kw[arriving])
         self.rate[arriving] = np.where(opt, price, 0.0)
-        return {"arrivals": n, "opt_in": int(opt.sum()), "new_ports": arriving}
+        return {"arrivals": n, "opt_in": int(opt.sum()), "new_ports": arriving,
+                "capped": int(capped.sum()), "capped_kwh": float((requested - target).sum())}
 
     # ------------------------------------------------------------------
     # Power bounds and dispatch

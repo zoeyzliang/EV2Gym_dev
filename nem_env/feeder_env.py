@@ -251,6 +251,7 @@ class NEMFeederEnv(gym.Env):
             "unmet_part_kwh": float(dep["unmet_part_kwh"].sum()),
             "unmet_nonpart_kwh": float(dep["unmet_nonpart_kwh"].sum()),
             "arrivals": arr["arrivals"], "opt_in": arr["opt_in"],
+            "targets_capped": arr["capped"], "capped_kwh": arr["capped_kwh"],
             "flex_kw": flex.tolist(), "net_kw": net.tolist(),
             "discharged_kwh": float(out["discharged_kwh"].sum()),
             "requested_kw": q_req.tolist(), "projected_kw": q.tolist(),

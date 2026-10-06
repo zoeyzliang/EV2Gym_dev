@@ -70,25 +70,49 @@ def parse_args():
 
 
 # ----------------------------------------------------------------------
-def select_eval_days(price_df: pd.DataFrame, year: int = 2024) -> pd.DataFrame:
-    """Stratified held-out days: per month, 20th/50th/90th percentile of daily RRP std."""
+def select_eval_days(price_df: pd.DataFrame, year: int = 2024,
+                     stress_threshold: float = 500.0, stress_max: int = 8) -> pd.DataFrame:
+    """
+    Held-out evaluation days, pre-registered in docs/env_redesign_spec.md §6
+    (never including the training VALIDATION_DAYS):
+
+    * representative set: for each month, the days at the 20th / 50th / 90th
+      percentile of that month's daily RRP standard deviation (main results);
+    * stress set: every other day with daily RRP std ≥ stress_threshold
+      ($/MWh, the volatile/extreme curriculum tiers), at most stress_max of
+      them (highest std first). Reported separately, never pooled.
+
+    Returns a frame indexed by "YYYY-MM-DD" with columns std, min, max, size,
+    set ("representative" | "stress"), tier and weekend.
+    """
     df = price_df[price_df.index.year == year]
     daily = df.groupby(df.index.date)["spot_price"].agg(["std", "min", "max", "size"])
+    # A day needs all 288 intervals: PriceLoader silently substitutes a random
+    # day for a shorter one (e.g. 1 Jan, which lacks its 00:00 interval).
     daily = daily[daily["size"] >= 288]
     daily.index = pd.to_datetime(daily.index)
     daily = daily[~daily.index.strftime("%Y-%m-%d").isin(VALIDATION_DAYS)]
-    rows = []
+    rep = []
     for m, g in daily.groupby(daily.index.month):
         g = g.sort_values("std")
         for q in (0.2, 0.5, 0.9):
-            d = g.index[int(round(q * (len(g) - 1)))]
-            rows.append(d)
-    out = daily.loc[sorted(set(rows))].copy()
+            rep.append(g.index[int(round(q * (len(g) - 1)))])
+    rep = sorted(set(rep))
+    rest = daily.drop(index=rep)
+    stress = rest[rest["std"] >= stress_threshold].sort_values("std", ascending=False).index[:stress_max]
+    out = pd.concat([daily.loc[rep].assign(set="representative"),
+                     daily.loc[sorted(stress)].assign(set="stress")])
     out["tier"] = pd.cut(out["std"], [-np.inf, 100, 500, 2000, np.inf],
                          labels=["calm", "normal", "volatile", "extreme"])
     out["weekend"] = out.index.dayofweek >= 5
     out.index = out.index.strftime("%Y-%m-%d")
     return out
+
+
+def episode_seed(date: str, rep: int) -> int:
+    """Seed tied to the date (not its position in the list), so a (date, rep)
+    pair always gets the same environment realisation in every evaluation."""
+    return 10_000 + int(pd.Timestamp(date).strftime("%Y%m%d")) % 1_000_000 * 10 + rep
 
 
 def check_config(ckpt: str, expected: dict, skip: bool) -> dict:
@@ -131,7 +155,10 @@ def load_learned(spec: str, env, road_graph, expected, skip):
 
 
 def run_episode(env, agent, date, seed):
-    obs, _ = env.reset(seed=seed, options={"date": date})
+    obs, info = env.reset(seed=seed, options={"date": date})
+    if info.get("date") != date:
+        raise RuntimeError(f"requested {date} but the env loaded {info.get('date')} "
+                           "(PriceLoader falls back to a random day for incomplete dates)")
     keys = ["r_wholesale", "r_incentive", "p_unmet", "p_limit", "p_terminal", "arbitrage_profit",
             "limit_viol_kwh", "v_viol_pu", "overload_kw", "unmet_part_kwh", "unmet_nonpart_kwh",
             "arrivals", "opt_in", "discharged_kwh"]
@@ -171,7 +198,8 @@ def main():
     if args.max_days:
         days = days.iloc[:args.max_days]
     days.to_csv(out / "eval_days.csv")
-    logger.info(f"{len(days)} held-out days; tiers: {days['tier'].value_counts().to_dict()}")
+    logger.info(f"{len(days)} held-out days: {days['set'].value_counts().to_dict()}; "
+                f"tiers: {days['tier'].value_counts().to_dict()}")
 
     train_prices = pd.read_parquet(f"{cfg['cache_dir']}/{cfg['region']}_{cfg['price_start']}_{cfg['price_end']}.parquet")
     agents = [("NoV2G", NoV2GBaseline(env.H)),
@@ -184,25 +212,26 @@ def main():
     rows, t0 = [], time.time()
     for di, (date, meta) in enumerate(days.iterrows()):
         for k in range(args.n_reps):
-            seed = 10_000 + 100 * di + k
+            seed = episode_seed(date, k)
             for name, agent in agents:
                 m = run_episode(env, agent, date, seed)
-                rows.append({"agent": name, "date": date, "rep": k, "seed": seed,
+                rows.append({"agent": name, "date": date, "rep": k, "seed": seed, "set": meta["set"],
                              "tier": meta["tier"], "weekend": meta["weekend"], **m})
             if args.lp and k < args.lp_reps:
                 v, c = perfect_foresight_bound(env, date, seed)
-                rows.append({"agent": "PF-LP-bound", "date": date, "rep": k, "seed": seed,
+                rows.append({"agent": "PF-LP-bound", "date": date, "rep": k, "seed": seed, "set": meta["set"],
                              "tier": meta["tier"], "weekend": meta["weekend"], "reward": v, "lp_incentive": c})
-        logger.info(f"day {di + 1}/{len(days)} {date} ({meta['tier']}) done, {time.time() - t0:.0f}s")
+        logger.info(f"day {di + 1}/{len(days)} {date} ({meta['set']}, {meta['tier']}) done, {time.time() - t0:.0f}s")
         pd.DataFrame(rows).to_csv(out / "per_run.csv", index=False)
 
     df = pd.DataFrame(rows)
     df.to_csv(out / "per_run.csv", index=False)
-    summary = df.groupby("agent").agg(
+    # Representative and stress days are summarised separately, never pooled.
+    summary = df.groupby(["set", "agent"]).agg(
         reward=("reward", "mean"), arbitrage_profit=("arbitrage_profit", "mean"),
         compliance=("compliance", "mean"), limit_viol_kwh=("limit_viol_kwh", "mean"),
         v_viol_pu=("v_viol_pu", "mean"), overload_kwh=("overload_kwh", "mean"),
-        unmet_kwh=("unmet_part_kwh", "mean"), unmet_nonpart_kwh=("unmet_nonpart_kwh", "mean"),
+        unmet_part_kwh=("unmet_part_kwh", "mean"), unmet_nonpart_kwh=("unmet_nonpart_kwh", "mean"),
         opt_in_rate=("opt_in_rate", "mean"), runs=("reward", "size"))
     summary.to_csv(out / "summary.csv")
     json.dump(vars(args), open(out / "eval_args.json", "w"), indent=2)

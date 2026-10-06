@@ -154,7 +154,8 @@ def main():
     elec = env.feeder.electrical_graph(road_graph)
     D = hop_matrix(elec.edge_index, env.H)
 
-    days = list(select_eval_days(env.price_loader._price_df).index)
+    sel = select_eval_days(env.price_loader._price_df)
+    days = list(sel[sel["set"] == "representative"].index)     # typical days only
     rng = np.random.default_rng(args.seed)
     days = [days[i] for i in sorted(rng.choice(len(days), size=min(args.n_days, len(days)), replace=False))]
     expected = {k: cfg[k] for k in ENV_KEYS}
