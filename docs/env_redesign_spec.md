@@ -187,6 +187,7 @@ Example (one day, seed 1):
      pilot data were analysed):
      - **Unit of comparison.** One paired (day, repetition) episode. Every agent faces the identical environment realisation (same seed).
      - **Measure.** d = limit_viol_kwh(λ-agent) − limit_viol_kwh(NoV2G) per paired episode; mean d with a 95% bootstrap CI (10,000 resamples over the paired episodes).
+       *Multi-seed refinement* (added 7 Oct 2026, before any full-length λ-study data existed): with several training seeds, the CI is a **hierarchical bootstrap**. Each of the 10,000 resamples draws seeds with replacement, then paired episodes with replacement within each drawn seed. Mean d is the mean over seeds of each seed's mean d. So the uncertainty includes seed-to-seed variation, not only day-to-day. Implemented in `decide_lambda.py`, written and tested before the λ-study runs.
      - **"No worse than NoV2G"** means the CI's upper bound is ≤ 0.5 kWh/day: a margin of about 3% of NoV2G's ~15 kWh/day, set in advance as practically negligible.
      - **Choice.** Among the λ values meeting this, take the smallest. If none meets it, take the λ with the smallest mean d and report that compliance is not matched.
      - **Reporting.** Pre-penalty profit (arbitrage_profit) relative to NoV2G is reported for every λ with the same paired CI, but does not decide λ.
