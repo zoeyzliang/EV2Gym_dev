@@ -20,32 +20,62 @@ job that is already pending with
 
 `sacctmgr show assoc user=zlia0072` lists the QOS available to this account.
 Each GPU pool below has its own per-user limit of 4 GPUs, so jobs can be
-spread across them (up to 12 GPUs at once, if no account-level cap applies).
+spread across them. Two pools also have **account-level** caps shared by
+everyone in `fr57` (`sacctmgr show qos`, `MaxTRESPA`): `fitq` 8 GPUs and
+`m3h` 4 GPUs. So up to 12 GPUs at once only while nobody else in the
+account is using fitq or m3h.
+
+| QOS | GPUs per user | GPUs per account (fr57) | Max wall time |
+|---|---|---|---|
+| normal | 4 | — | 7 days |
+| fitq | 4 | 8 | 1 day |
+| m3h | 4 | 4 | 2 days |
+
+Every script requests `--partition=gpu --qos=normal --constraint=L40S`;
+other pools are chosen only on the `sbatch` command line.
 `sbatch` options on the command line override the script's `#SBATCH` lines,
 including `--constraint=L40S`.
 
 | Pool | sbatch options | GPUs | Max wall time |
 |---|---|---|---|
-| gpu (default) | *(none)* | L40S (also A100/A40/T4 nodes) | 7 days |
-| gpu, any type | `--constraint= --exclude=m3t100` | L40S/A100/A40, **no T4** | 7 days |
-| fit | `--partition=fit --qos=fitq --constraint=` | A100, H200 | 1 day |
-| m3h | `--partition=m3h --qos=m3h --constraint=` | H100 | 2 days |
+| gpu (default) | *(none: scripts default to `--constraint=L40S`)* | L40S | 7 days |
+| fit | `--partition=fit --qos=fitq --constraint= --gres=gpu:A100:1` | A100 | 1 day |
+| m3h | `--partition=m3h --qos=m3h --constraint= --gres=gpu:H100:1` | H100 | 2 days |
 
-`--constraint=` (empty) clears the L40S requirement; M3's node feature names
-differ from the GRES names, so `--constraint=A100` is rejected (check with
-`sinfo -p fit,m3h -o "%22N %G %f"` if a specific GPU type is ever needed).
-Without the L40S constraint the `gpu` partition can also start a job on
-`m3t100`, the only T4 node (much slower: the 2026-10-06 pilot landed there),
-so add `--exclude=m3t100` whenever the constraint is cleared on `gpu`.
-Results do not depend on GPU type; only wall-clock times do, and each pack
-job logs its GPU (`nvidia-smi`). Quote timings from the L40S benchmark.
+GPU nodes as reported by `sinfo -p gpu,fit,m3h -o "%12P %22N %G"` (2026-10-06):
+
+| Partition | Nodes | GPUs per node |
+|---|---|---|
+| gpu | m3g[100-119] | 4 × **L40S** |
+| gpu | m3n[100-112], m3a[118-120] | 2 × A100 |
+| gpu | m3a[105-107] | 4 × A40 |
+| gpu | m3t100 | 8 × **T4** (old; never use) |
+| fit | m3u[000-008] | 4 × **A100** |
+| fit | m3u009 | 8 × **A100** |
+| fit | m3u[010-013] | 4 × H200 |
+| m3h | m3h[100-101,110-111] | 4 × **H100** |
+
+So `--gres=gpu:A100:1` on `fit` can run on m3u[000-009] and `--gres=gpu:H100:1`
+on `m3h` on any m3h node. Re-check with the `sinfo` command above if M3
+changes its hardware. To confirm where a job *would* run without submitting
+it, add `--test-only` to the `sbatch` line.
+
+**Always pin a modern GPU type.** Never submit with the constraint cleared
+and no type: on the `gpu` partition that can land on the T4 node (m3t100) or
+A40s, which is exactly what happened to the 2026-10-06 pilot. On `fit` and
+`m3h`, `--constraint=` only removes the scripts' L40S default (those
+partitions have no L40S) and `--gres=gpu:<TYPE>:1` pins the type. GRES names
+match `sinfo -o "%G"`; node feature names differ, so `--constraint=A100` is
+rejected. Results do not depend on GPU type; only wall-clock times do, and
+each pack job logs its GPU (`nvidia-smi`). Quote timings from the L40S
+benchmark.
 
 Example: three seeds of E1 started at once on three pools:
 
 ```
 sbatch --job-name=fdr_s42 slurm/train_feeder_pack.sh "sac_gnn:42 sac_gcn:42 sac_flat:42 sac_gnn:42:noedge" perhub_lc<λ> --doe_mode per_hub --lambda_conf <λ>
-sbatch --partition=fit --qos=fitq --constraint= --job-name=fdr_s1 slurm/train_feeder_pack.sh "sac_gnn:1 sac_gcn:1 sac_flat:1 sac_gnn:1:noedge" perhub_lc<λ> --doe_mode per_hub --lambda_conf <λ>
-sbatch --partition=m3h --qos=m3h --constraint= --job-name=fdr_s2 slurm/train_feeder_pack.sh "sac_gnn:2 sac_gcn:2 sac_flat:2 sac_gnn:2:noedge" perhub_lc<λ> --doe_mode per_hub --lambda_conf <λ>
+sbatch --partition=fit --qos=fitq --constraint= --gres=gpu:A100:1 --job-name=fdr_s1 slurm/train_feeder_pack.sh "sac_gnn:1 sac_gcn:1 sac_flat:1 sac_gnn:1:noedge" perhub_lc<λ> --doe_mode per_hub --lambda_conf <λ>
+sbatch --partition=m3h --qos=m3h --constraint= --gres=gpu:H100:1 --job-name=fdr_s2 slurm/train_feeder_pack.sh "sac_gnn:2 sac_gcn:2 sac_flat:2 sac_gnn:2:noedge" perhub_lc<λ> --doe_mode per_hub --lambda_conf <λ>
 ```
 
 ## Feeder-environment batch (redesign, from 2026-10-06)
