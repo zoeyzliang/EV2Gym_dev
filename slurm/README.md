@@ -16,6 +16,38 @@ asks for 3 days and `pilot_coupled_lambda.sh` for 12 h. Lower the limit of a
 job that is already pending with
 `scontrol update JobId=<id> TimeLimit=HH:MM:SS` (it can only be lowered).
 
+## GPU pools (three separate 4-GPU allowances)
+
+`sacctmgr show assoc user=zlia0072` lists the QOS available to this account.
+Each GPU pool below has its own per-user limit of 4 GPUs, so jobs can be
+spread across them (up to 12 GPUs at once, if no account-level cap applies).
+`sbatch` options on the command line override the script's `#SBATCH` lines,
+including `--constraint=L40S`.
+
+| Pool | sbatch options | GPUs | Max wall time |
+|---|---|---|---|
+| gpu (default) | *(none)* | L40S (also A100/A40/T4 nodes) | 7 days |
+| gpu, any type | `--constraint= --exclude=m3t100` | L40S/A100/A40, **no T4** | 7 days |
+| fit | `--partition=fit --qos=fitq --constraint=` | A100, H200 | 1 day |
+| m3h | `--partition=m3h --qos=m3h --constraint=` | H100 | 2 days |
+
+`--constraint=` (empty) clears the L40S requirement; M3's node feature names
+differ from the GRES names, so `--constraint=A100` is rejected (check with
+`sinfo -p fit,m3h -o "%22N %G %f"` if a specific GPU type is ever needed).
+Without the L40S constraint the `gpu` partition can also start a job on
+`m3t100`, the only T4 node (much slower: the 2026-10-06 pilot landed there),
+so add `--exclude=m3t100` whenever the constraint is cleared on `gpu`.
+Results do not depend on GPU type; only wall-clock times do, and each pack
+job logs its GPU (`nvidia-smi`). Quote timings from the L40S benchmark.
+
+Example: three seeds of E1 started at once on three pools:
+
+```
+sbatch --job-name=fdr_s42 slurm/train_feeder_pack.sh "sac_gnn:42 sac_gcn:42 sac_flat:42 sac_gnn:42:noedge" perhub_lc<λ> --doe_mode per_hub --lambda_conf <λ>
+sbatch --partition=fit --qos=fitq --constraint= --job-name=fdr_s1 slurm/train_feeder_pack.sh "sac_gnn:1 sac_gcn:1 sac_flat:1 sac_gnn:1:noedge" perhub_lc<λ> --doe_mode per_hub --lambda_conf <λ>
+sbatch --partition=m3h --qos=m3h --constraint= --job-name=fdr_s2 slurm/train_feeder_pack.sh "sac_gnn:2 sac_gcn:2 sac_flat:2 sac_gnn:2:noedge" perhub_lc<λ> --doe_mode per_hub --lambda_conf <λ>
+```
+
 ## Feeder-environment batch (redesign, from 2026-10-06)
 
 Environment: `NEMFeederEnv` (`--env feeder`), spec in `docs/env_redesign_spec.md`.
@@ -25,7 +57,7 @@ run uses ~1 CPU core and ~3 GB and leaves the GPU mostly idle.
 **Step 1: λ pilot** (one GPU job, three penalty levels, 300 episodes):
 
 ```
-sbatch --job-name=fdr_pilot slurm/train_feeder_pack.sh \
+sbatch --job-name=fdr_pilot --time=02:00:00 slurm/train_feeder_pack.sh \
     "sac_gnn:42:lc0.5 sac_gnn:42:lc2 sac_gnn:42:lc10" pilot --doe_mode per_hub --episodes 300
 ```
 
@@ -52,8 +84,11 @@ repetitions + the perfect-foresight LP bound, about 30–45 min):
 sbatch --job-name=eval_fdr_s42 slurm/evaluate_feeder.sh feeder_perhub_lc<λ>_<date> 42 --doe_mode per_hub
 ```
 
-Training time limits stay provisional (3 days) until
-`benchmark_train_speed.sh` has measured the post-speed-up step time.
+Time limits come from the L40S benchmark (job 60746661): one SAC-GNN run is
+20 ms/step (2.4 h per 1,500 episodes), four packed runs 24–29 ms/step (~3.5 h),
+plus ~25 min per run for the per-date DOE computation. Packed 1,500-episode
+jobs request 6 h (measured + ~30%); the 300-episode pilot needs ~1 h, so pass `--time=02:00:00`
+on the `sbatch` line (it overrides the script's default).
 
 ## Coupled-energy-model batch (2026-10-04) — referee M1/M3/M4 rerun
 

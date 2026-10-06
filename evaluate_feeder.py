@@ -61,6 +61,11 @@ def parse_args():
     p.add_argument("--lp_reps", type=int, default=1, help="repetitions per day for the LP bound")
     p.add_argument("--results_dir", required=True)
     p.add_argument("--skip_config_check", action="store_true")
+    # E4 (spec §6): evaluate trained policies when owners respond differently
+    # from the participation model they were trained under.
+    p.add_argument("--beta1_scale", type=float, default=1.0, help="multiplier on price sensitivity β1")
+    p.add_argument("--beta3_scale", type=float, default=1.0, help="multiplier on SoC effect β3")
+    p.add_argument("--gamma_scale", type=float, default=1.0, help="multiplier on degradation cost γ")
     return p.parse_args()
 
 
@@ -151,6 +156,13 @@ def main():
     cfg.update(env="feeder", doe_mode=args.doe_mode, spatial=args.spatial,
                forecast_sigma=args.forecast_sigma, pv_penetration=args.pv_penetration, graph=args.graph)
     env, road_graph, hubs = make_env(cfg, split="eval", seed=0)
+    pm = env.participation_model
+    pm.beta_1 *= args.beta1_scale
+    pm.beta_3 *= args.beta3_scale
+    pm.gamma *= args.gamma_scale
+    if (args.beta1_scale, args.beta3_scale, args.gamma_scale) != (1.0, 1.0, 1.0):
+        logger.info(f"E4 participation perturbation: beta_1={pm.beta_1:.4f}, "
+                    f"beta_3={pm.beta_3:.3f}, gamma={pm.gamma:.4f}")
     # make_env returns the encoder graph; learned agents rebuild theirs from config
     from nem_env.spatial_graph import HubGraphBuilder
     road_graph, _ = HubGraphBuilder.load(cfg["graph_path"])

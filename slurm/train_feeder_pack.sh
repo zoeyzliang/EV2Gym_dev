@@ -7,7 +7,7 @@
 #SBATCH --constraint=L40S
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
-#SBATCH --time=08:00:00
+#SBATCH --time=06:00:00
 #SBATCH --output=/scratch2/fr57/zlia0072/ev2gym_training/logs/slurm_%j_%x.out
 #SBATCH --error=/scratch2/fr57/zlia0072/ev2gym_training/logs/slurm_%j_%x.err
 
@@ -19,7 +19,8 @@
 # Time limit: benchmark_train_speed.sh (job 60746661, L40S) measured 20 ms/step
 # for one SAC-GNN run (2.4 h per 1500 episodes) and 24-29 ms/step with four
 # runs packed (~3.5 h). Adding the feeder env's per-date DOE computation
-# (~25 min per run) gives ~4.5 h; 8 h leaves headroom for 32-hub runs.
+# (~25 min per run) gives ~4.5 h; 6 h = measured + ~30%. (The feeder env
+# places hubs on 29 loaded buses, so there are no 32-hub feeder runs.)
 #
 # Usage:
 #   sbatch --job-name=<name> slurm/train_feeder_pack.sh "<runs>" <batch_tag> [extra train args...]
@@ -34,8 +35,8 @@
 #       "sac_gnn:42 sac_gcn:42 sac_flat:42 sac_gnn:42:noedge" perhub_lc1 \
 #       --doe_mode per_hub --lambda_conf 1 --episodes 1500
 #
-# Lambda pilot (3 runs, 300 episodes, one GPU job):
-#   sbatch --job-name=fdr_pilot slurm/train_feeder_pack.sh \
+# Lambda pilot (3 runs, 300 episodes, one GPU job; ~1 h, so shorten the limit):
+#   sbatch --job-name=fdr_pilot --time=02:00:00 slurm/train_feeder_pack.sh \
 #       "sac_gnn:42:lc0.5 sac_gnn:42:lc2 sac_gnn:42:lc10" pilot --doe_mode per_hub --episodes 300
 #
 # Results: results/feeder_<batch_tag>_<YYYYMMDD>/<agent>[_noedge][_lc<l>]_seed<N>/

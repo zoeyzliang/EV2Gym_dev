@@ -1,173 +1,192 @@
-# Environment redesign spec: feeder-grounded DOE dispatch (`NEMFeederEnv`)
+# Feeder-grounded DOE dispatch environment (`NEMFeederEnv`): as built
 
-Status: draft for sign-off (Zoey, Terrence). Target: thesis results by about 16 Oct 2026.
-The legacy `NEMDOEEnv` stays unchanged so that draft-v1 results remain reproducible.
+Status: implemented on `main` (commits 182d9e7, 6a2546b, 25854c6), 6 Oct 2026.
+This document records the design **as implemented and calibrated**, for the
+thesis methodology chapter. The legacy `NEMDOEEnv` is unchanged, so draft-v1
+results remain reproducible (`--energy_model legacy`, bit-identical).
 
-## 1. Why: what the current environment lacks
+## 1. Why: gaps in the legacy environment
 
-| Gap in `NEMDOEEnv` (legacy/coupled) | Consequence | Review ref. |
+| Gap in `NEMDOEEnv` | Consequence | Review ref. |
 |---|---|---|
-| The DOE clips the agent's request, so compliance is guaranteed and free | "Compliance" measures intent; agents keep a large free margin (~10 kW dispatched vs a 35 kW mean DOE) | M1 |
-| DOEs are i.i.d. per hub, the graph uses road distance, `edge_attr` is unused | No spatial structure for a graph encoder to exploit | M5 |
-| Mean SoC reverts to its average (half-life ≈ 33 min); occupancy ignores actions | Near-contextual-bandit; a myopic oracle is near-optimal, so the case for RL is weak | M7 |
-| Re-decided participation every 5 min; incentive paid on charging | Unrealistic participation and pricing | M9 |
-| No grid physics | DOE compliance is not tied to voltages or thermal limits | VIII-A |
+| Traded energy ignored the dispatch magnitude (sign × responders × 8 kWh) | Profits not physical; the DOE never limited energy | M4 |
+| The DOE clipped the request, so compliance was guaranteed and free | Trained agents dispatched ~10 kW against a 35 kW mean DOE: a free safety margin, not constraint satisfaction | M1 |
+| DOEs i.i.d. per hub; road-distance graph; `edge_attr` unused | Nothing for message passing to exploit (measured: 90–95% of dispatch variation came from global price/time) | M5, M3 |
+| Mean SoC reverted to its average (half-life ≈ 33 min); occupancy ignored actions | Near-contextual-bandit; a one-step oracle was near-optimal | M7 |
+| Participation re-decided every 5 min; incentive paid on charging too | Unrealistic participation and pricing | M9 |
+| No grid physics | DOE compliance not tied to voltages or thermal limits | VIII-A |
 
-## 2. Claims and the experiment that supports each
+## 2. Claims and supporting experiments
 
 | Claim | Supported by |
 |---|---|
-| **C1. A realistic, reproducible formulation** of public V2G hub dispatch under power-flow-derived, location-specific DOEs applied to *net site flow*, with EV sessions, opt-in participation and real NEM data | §4 model; §7 validation tests; benchmarks that behave as expected (§5) |
-| **C2. When graph structure helps:** graph vs edgeless vs flat, with spatial DOE structure on vs off | Experiment E2 + policy-sensitivity diagnostics |
-| **C3. Compliance under genuine uncertainty:** profit vs violation trade-off as forecast error grows | Experiment E3 (+ voltage outcomes, E5) |
+| **C1.** A realistic, reproducible formulation of public V2G hub dispatch under power-flow-derived, location-specific DOEs on net site flow, with EV sessions, session-level opt-in and real NEM data | §4 model; §7 validation tests; benchmark ordering (§5) |
+| **C2.** When graph structure helps: graph vs edgeless vs flat, with spatial structure and inter-hub coupling on vs off | E2 + policy-sensitivity diagnostics |
+| **C3.** Constraint satisfaction under genuine uncertainty: profit vs violations as forecast error grows | E3, E5 |
 
 ## 3. Scope
 
-- **Must (thesis):** feeder + power-flow DOEs, net-site compliance, EV sessions, opt-in, electrical graph, per-hub capacity scaling, perfect-foresight LP benchmark, experiments E1–E5.
-- **Stretch:** a learned safety-margin layer; the 32-hub feeder variant; Australian EV session data in place of ElaadNL.
+- **Implemented:** feeder + power flow; DOEs from voltage and thermal limits; network-aware mode; net-site compliance; EV sessions with opt-in and departure targets; charger throttling; electrical graph; per-hub capacity scaling for all agents; NoV2G, GreedyTOU, RulePrice and perfect-foresight LP baselines; stratified evaluation; packed training.
+- **Not implemented (journal version):** forecast-based MPC; a learned safety-layer comparison; the 32-hub study on a larger feeder (the 34-node feeder has 29 loaded buses, fewer than 32 hubs).
 
 ## 4. Model
 
-### 4.1 Network and hub mapping
-- **Feeder.** The 34-node radial feeder shipped with EV2Gym (from RL-ADN; 11 kV, 33 load buses, 7.8 MW nominal load). Power flow uses `GridTensor` (tensor/Laurent solver): 0.06 ms per solve, 3.9 ms for a 200-scenario batch.
-  - The installed pandapower (2.13) does not import under numpy 2. We set `np.Inf = np.inf` before import; no environment change is needed.
-- **Hub → bus mapping (stylised, disclosed).** Sort the 21 hubs by road distance from the zone centroid and the 33 buses by electrical distance from the substation, then assign in order. Hubs far from the centre therefore sit on electrically weak buses.
-- **Graph (electrical).** Hubs are adjacent if their buses are within *k* hops in the feeder tree, after contracting buses that carry no hub. Edge attribute: the impedance distance between the two buses. The road-distance graph is kept as an ablation.
+### 4.1 Network, power flow, hub placement (`nem_env/feeder.py`, `nem_env/powerflow.py`)
+- **Feeder.** The 34-node radial 11 kV feeder shipped with EV2Gym (from RL-ADN): 33 non-slack buses, 7.8 MW nominal load.
+- **Power flow.** Batched fixed-point ("tensor") power flow for constant-power loads, re-implemented in NumPy. It uses the same algorithm and network model as EV2Gym's `GridTensor` and matches it to 5×10⁻⁸ pu on 2,000 scenarios. It is about 0.004 ms per scenario and has no numba/pandapower dependency.
+- **Substation set point.** V_s = 1.03 pu, applied exactly: for constant-power loads, the solution with the slack at V_s equals V_s × the solution for powers / V_s².
+- **Hub placement (stylised, disclosed).** The 21 hubs are ranked by radial distance from the zone centre. The loaded buses are ranked by electrical distance from the substation, 21 are chosen at evenly spaced quantiles, and hubs are assigned in rank order.
+- **Electrical graph.** Hubs are connected if their buses are within 3 hops in the feeder tree (74 directed edges, mean degree 3.5; the road graph has 140). The edge attribute is the normalised path impedance. The encoders currently ignore `edge_attr`.
 
-### 4.2 Background (non-EV) load and PV, from AEMO data on the same dates as RRP
-- **Per bus *b*, at step *t*:**
-  `P^bg_{b,t} = PD_b · κ_load · D_t − PV_b · S_t`
-  - `D_t` is VIC1 `TOTALDEMAND` (DISPATCHREGIONSUM, 5-min), normalised to its annual mean.
-  - `S_t` is VIC1 `ROOFTOP_PV_ACTUAL` (30-min, interpolated), normalised to annual peak.
-  - `PV_b = π · PD_b`, where π is the PV penetration (default 0.6; sensitivity values {0.3, 0.6, 0.9}).
-- **Calibration.** Choose `κ_load` and π so that, with no EVs, voltages stay inside [0.95, 1.05] pu but approach the lower limit at the evening peak and the upper limit at the midday PV peak. DOEs then bind on import in the evening and on export at midday, the Australian pattern. This also ties price and grid stress together naturally: midday PV brings low or negative RRP *and* tight export DOEs.
-- **Forecast vs realised.** `P^real = P^fcst · (1 + ε)`. ε follows an AR(1) process per feeder lateral, so errors are correlated within a lateral; σ defaults to 5% (sensitivity {0, 5, 10}%).
+### 4.2 Background load and PV (`nem_env/grid_profiles.py`)
+- **Data.** VIC1 `DISPATCHREGIONSUM.TOTALDEMAND` (5-min) and `ROOFTOP_PV_ACTUAL` (30-min, interpolated to 5-min) for 2022–2024, on the same dates as the RRP.
+- **Normalisation.** Demand is divided by its 99th percentile, so κ·PD_b is the bus's peak load. PV is divided by **each calendar year's** 99.5th percentile, because rooftop capacity grew strongly over 2022–2024 and normalising by the overall peak would give the training years systematically less PV than the test year.
+- **Background per bus:** `P_bg = κ·PD_b·D_t − π·κ·PD_b·S_t`, `Q_bg = κ·QD_b·D_t`.
+  - κ = 0.7 (calibrated below).
+  - π = PV peak as a fraction of the bus peak load: 0.6 by default; sensitivity at 0.3 and 0.9.
+- **Calibration (no EVs, 3 years at 15-min).** With κ = 0.7 and π = 0.6:
+  - minimum bus voltage at the evening peak: 0.958 pu (1st percentile);
+  - maximum bus voltage at midday: 1.045 pu (99th percentile);
+  - the background alone never breaches [0.95, 1.05].
+  - At π = 0.9, the background exceeds 1.05 pu on 1.5% of time and reverse flow occurs on 11%.
+- **Forecast vs realised.** Realised = forecast × (1 + ε). ε follows an AR(1) process (ρ = 0.9), half common to all buses and half bus-specific, with σ = 5% by default (sensitivity 0 and 10%).
 
-### 4.3 DOE computation (DNSP side, every 30 min)
-1. **Individual hosting capacity.** For each hub *i*, take the forecast worst case over the next 30 min with all other hubs at forecast baseline. `h_i` is the largest export (and, separately, import) that keeps every bus voltage within limits. Found by bisection on batched power flow.
-2. **Joint feasibility.** Set `DOE_i = min(cap_i, κ* · h_i)`, where κ* ≤ 1 is the largest common scale under which *all* hubs at their DOE are jointly feasible (found by bisection). This is "scaled individual hosting capacity": location-specific (weak buses get less), time-varying, and jointly safe under the *forecast*.
-3. DOEs are published to the agent and held for 6 steps.
+### 4.3 DOEs (`Feeder.doe_day`, `Feeder.hosting_day`)
+- **Limits.** Bus voltage in [0.95, 1.05] pu. Section thermal rating = 1.0 × the section's downstream design peak load (design rule; the feeder data has no ratings). Section flows are computed as radial sums of downstream bus powers.
+- **Individual hosting capacity h_i.** The largest import (or export) at hub i, with all other hubs at baseline, that keeps every bus voltage and section flow within limits over the 30-min window of forecast background. Found by a two-stage grid search on batched power flow. A limit already breached by the background alone is not attributed to the hub.
+- **Per-hub DOE (default mode).** `DOE_i = min(cap_i, κ*·h_i)`, where κ* ≤ 1 is the largest common factor under which all hubs at their DOE are jointly feasible under the forecast. Published every 30 min and held for 6 steps.
+- **Network-aware mode (E2).** Limits are the individual hosting capacities h_i, without the joint scaling. Their sum can exceed what the feeder takes jointly, so hubs must coordinate. Violations are measured physically: voltage excursions and section overloads from the realised power flow.
+- **What the DOEs look like** (π = 0.6):
+  - Sunny summer day: mean export DOE 58% of capacity at noon, 86% at 9 am, 96% at night. Import DOE 93% at the evening peak.
+  - Import is limited on about 16% of hub-steps, mostly at electrically weak buses.
+  - Joint coupling (κ* < 1) occurs in 10% of evening-peak windows and 14% of midday windows, with κ* ≈ 0.7 when coupled. At π = 0.9 this rises to 28–37% of midday windows (κ* ≈ 0.44), and export DOEs reach zero at noon.
+- **Caching.** DOEs depend only on the date and the forecast, so they are cached per date (about 1.5 s per date).
+- **Spatial ablation (E2, `--spatial permuted`).** Hubs' limit fractions are permuted independently in each 30-min block. This keeps each step's distribution of limits and destroys the spatial structure.
 
-### 4.4 EV sessions (per hub, per charger port)
-- **Arrivals.** Poisson with the ElaadNL public time-of-day profile (weekday/weekend, 15-min, from EV2Gym), scaled to `sessions_per_port_per_day` (assumption: 2.5). An arrival is lost if every port is busy (logged).
-- **Dwell time.** EV2Gym's `time_of_connection_vs_hour` matrix (conditional on arrival hour).
-- **Energy demand.** ElaadNL public distribution, capped by battery headroom.
-- **EV model.** Sampled by registrations from `ev_specs_v2g_enabled2024.json`.
-  - Battery 46–77 kWh.
-  - Charge power = min(EV DC limit, charger kW).
-  - **Discharge ≈ 10–11 kW**, the real V2G limit for these models.
-- **SoC.** Arrival SoC = target SoC (0.8) − demand / capacity, clipped to [0.1, 0.8].
+### 4.4 EV sessions (`nem_env/sessions.py`)
+Session sampling mirrors EV2Gym's public scenario (ElaadNL distributions shipped with EV2Gym):
+- **Arrivals.** A free port receives an EV with a per-step probability shaped by the public arrival curve (weekday/weekend, 15-min). It is scaled so that 2.5 arrivals are *offered* per port per day; realised: about 1.4 sessions per port per day and 26% mean occupancy, since ports are often busy.
+- **Energy demand** ~ N(mean(arrival half-hour), 0.5·mean), with a minimum of 5 kWh. **Dwell time** ~ N(mean(arrival half-hour), 0.2·mean) h.
+- **EV models** are sampled by registrations from `ev_specs_v2g_enabled2024.json` (battery 46–77 kWh). Charge power = min(DC limit, charger kW). **Discharge ≈ 10–11 kW**, the real V2G limit for these models.
+- **Battery.** Efficiency 0.95 each way. SoC floor 0.2 for V2G. Target energy = arrival energy + demand (capped at capacity).
 
-### 4.5 Participation (opt-in once, at arrival)
-- The owner is offered the current incentive `c_t` (paid per kWh **discharged** only) and accepts with the existing logistic ρ(c, d_h, SoC_arr, g). β and γ are unchanged and disclosed; *g* is the session's anticipated V2G discharge.
-- **Participants** are dispatchable, subject to: SoC ≥ 0.2; reaching the target energy by departure; per-EV power limits.
-- **Non-participants** charge immediately at full power until satisfied. This is uncontrolled site load the agent cannot dispatch, and its realised value is uncertain.
+### 4.5 Participation (one decision per session)
+- At arrival, the owner is offered the current incentive c_t ($/kWh, paid on **discharged** energy only, contracted for the session). They accept with the logistic ρ(c, d_h, SoC_arr, g), using the unchanged β and γ: β₀ −2.2, β₁ 0.008 per $/MWh, β₂ −0.2, β₃ 1.5, γ 0.14.
+- **Measured opt-in rates:** 11% at $0/kWh, 39% at $0.20, 78% at $0.50.
+- **Participants** are dispatchable. **Non-participants** charge only, as fast as the site allows.
 
-### 4.6 Action, allocation, safety projection
-- **Action.** For each hub, a normalised dispatch for its participating fleet, scaled by the hub's own capacity (fixes the uniform 100 kW issue, B3), plus one network-wide incentive price.
-- **Allocation inside a hub.**
-  - Charging goes to EVs in least-laxity-first order; discharging comes from EVs in most-slack-first order.
-  - Each EV's power is projected onto its feasible set this step, including "can still reach target by departure".
-  - The executed flexible power is the sum.
+### 4.6 Action, allocation, safety projection (`NEMFeederEnv.step`)
+- **Action.** For each hub, a normalised setpoint in [−1, 1] for its participants (+ = discharge), scaled by the hub's **own** capacity; plus one network-wide incentive in [0, 0.5] $/kWh.
+- **Per-EV bounds each step.** These keep SoC within [floor, capacity] and keep the departure target reachable. **Forced charging** applies when an EV has no slack left. Participants never leave under-charged.
 - **Safety projection (the deployed clip).**
-  - The DOE applies to **net site flow**: flexible fleet + uncontrolled charging + site base load.
-  - The clip can only use the **forecast** of the uncontrolled part, so the **realised** net flow can still breach the DOE.
-  - Compliance is therefore a real, uncertain outcome. This answers M1.
+  1. The participant setpoint is limited to [−export limit, import limit − expected in-step arrivals].
+  2. It is then limited to the fleet's feasible bounds; forced charging overrides the limit, which is then a genuine violation.
+  3. Non-participants share the remaining import headroom, least-laxity-first. This is how DOE-compliant (CSIP-AUS) chargers would throttle them.
+- **Uncertainty.** EVs arriving *during* the step (with non-participants charging at once) and the background forecast error mean the realised outcome can differ from the projected one.
 
 ### 4.7 Reward ($ per step)
-`r_t = RRP_t·E^flex_t/1000 − c_t·E^dis_t − λ_u·E^unmet_t − λ_doe·Δt·Σ_i max(0, |P^net,real_i| − DOE_i)`
-- `E^flex`: net flexible energy (kWh). Charging is a cost at RRP and discharging a revenue.
-- `E^dis`: discharged energy paid to owners.
-- `E^unmet`: energy short of targets at departures (λ_u is a $/kWh dissatisfaction cost).
-- The DOE term is in **energy** units ($/kWh of violation), consistent with revenue. λ_doe is set by the pilot.
-- Revenue from uncontrolled charging is a pass-through and excluded.
-- Realised voltages are **reported**, not rewarded, in the main runs (stretch: a voltage penalty).
+`r = −RRP·Σ flex·Δt/1000 − Σ rate·E_dis − λ_u·E_unmet − P_limit (− P_terminal at the end of day)`
+- **Wholesale term.** Participants' net energy at RRP: charging is a cost, discharging a revenue. Non-participants' energy is a pass-through and is excluded.
+- **Unmet energy.** λ_u = $1/kWh short of target at departure, for **all** customers (non-participants can be short when throttled).
+- **P_limit.** Per-hub mode: λ_doe × kWh of realised net-site-flow violation. Network mode: λ_doe × kWh of section overload + λ_v × pu voltage violation. **λ_doe is chosen by the pilot (§10).**
+- **Terminal term.** Energy participants still need at the end of the day is charged at the day's mean RRP, so draining batteries late in the day is not free.
 
-### 4.8 Observation (per hub node; global values broadcast)
-1. DOE import / export
-2. Forecast uncontrolled site load
-3. Participating EV count
-4. Flexible energy needed by departures / storable
-5. Fleet max charge / discharge power
-6. Mean hours to departure
-7. Port occupancy
-8. Mean participant SoC
-9. Hub capacity
-10. RRP_t
-11. Mean RRP over the last 30 min
-12. Hour (sin/cos)
-13. Weekend flag
-14. Steps to next DOE update
+### 4.8 Observation (17 features per hub; global values broadcast)
+1. Import limit / capacity
+2. Export limit / capacity
+3. Uncontrolled load / capacity
+4. Participants per port
+5. Fleet max charge / capacity
+6. Fleet max discharge (negative = forced charging) / capacity
+7. Energy still needed (hours at full power)
+8. Mean hours to departure / 24
+9. Port occupancy
+10. Capacity / 200
+11. Last hub bus voltage deviation × 10
+12. RRP / 1000
+13. Mean RRP over the last 30 min / 1000
+14. sin(hour)
+15. cos(hour)
+16. Weekend flag
+17. Time to the next DOE update
 
-About 16 features. `NetworkConfig.node_feature_dim` becomes a parameter (it is currently hard-coded to 9).
+## 5. Baselines (`baselines/feeder_baselines.py`)
 
-## 5. Baselines
-- **Uncontrolled** (no V2G; everyone charges immediately): reference.
-- **Greedy:** price threshold, full power.
-- **RulePrice.**
-- **Myopic Oracle:** knows ρ and the forecasts; one-step.
-- **Perfect-foresight LP (upper bound):** realised prices, sessions, opt-ins and background load are known. Per-hub aggregate energy-reservoir model; constant incentive chosen by grid search. Solved with `scipy.optimize.milp` (HiGHS, already installed). Size ≈ 21 hubs × 288 steps.
+| Baseline | Rule |
+|---|---|
+| **NoV2G** | Participants charge as soon as possible; no incentive. Reference for V2G value and for the λ selection rule. |
+| **GreedyTOU** | Discharge at full setpoint when RRP ≥ $264/MWh, charge when ≤ $9/MWh (90th/25th percentiles of the 2022–23 *training* prices), otherwise idle; incentive $0.15/kWh. |
+| **RulePrice** | Port of the draft's baseline: incentive = 50% of RRP (capped), discharge if RRP > incentive, else charge. |
+| **Perfect-foresight LP** | Upper bound over constant-incentive policies. Knowing the day's prices, arrivals, opt-ins and limits, it solves the optimal per-EV schedule (HiGHS via SciPy). It is solved for c ∈ {0, 0.1, …, 0.5} and the best is kept; about 5–6 s per LP. Caveat: the RL agent may vary the incentive over time, which can change who opts in, so this bounds constant-incentive policies. |
 
-## 6. Experiments
-- **E1 (main):** SAC-GNN, SAC-GCN, SAC-Flat, SAC-GNN-NoEdge, + baselines.
-  - 21 hubs; ≥3 seeds (5 if packing allows).
-  - ≥30 held-out 2024 days stratified by season and price volatility, with stress days labelled honestly.
-  - Seed-level IQM with bootstrap CIs; per-day paired tests reported as secondary.
-- **E2 (C2):** spatial structure on (power-flow DOEs + correlated errors) vs off (i.i.d. DOEs with matched marginals). Graph vs edgeless vs flat in both.
-- **E3 (C3):** forecast error σ ∈ {0, 5, 10}%, giving profit vs DOE-violation rate.
-- **E4 (M9):** evaluate trained policies under perturbed β/γ (eval-only).
-- **E5 (VIII-A):** realised voltage violations for each policy, from power flow.
-- **Diagnostics:** neighbour-sensitivity test (does hub *i*'s dispatch respond to hub *j*'s state, by electrical distance?) and attention entropy.
+Example (one day, seed 1):
+- 13 Feb 2024 (spike to $16,600/MWh): GreedyTOU −$1,356, LP bound +$3,188. Greedy discharges early and must recharge during the same multi-hour spike, which is evidence of intertemporal structure (M7).
+- 20 Dec 2023 (sunny): NoV2G −$13.5, GreedyTOU −$7.7, LP +$49.1.
 
-## 7. Validation tests (before any training)
-- Power flow converges on every step of 50 sampled days.
-- DOEs are jointly feasible under the forecast: all hubs at DOE ⇒ voltages within limits.
-- Session energy is conserved: Σ delivered + unmet = Σ requested.
-- No EV goes below SoC 0.2 or above 1.0.
-- A participant that is always feasible is fully charged at departure.
-- With σ = 0 and the projection active, the DOE violation is 0.
-- The LP benchmark ≥ every policy on the same realisations.
-- Edgeless isolation (existing perturbation test, re-run for the new features).
-- The legacy env is still bit-identical.
+## 6. Experiments (all via `train_feeder_pack.sh` / `evaluate_feeder.sh`)
+
+| Exp. | Question | Setting |
+|---|---|---|
+| **E1** | Main comparison | `--doe_mode per_hub`; SAC-GNN, SAC-GCN, SAC-Flat, SAC-GNN-NoEdge; 5 seeds |
+| **E2** | When does the graph help? | `--doe_mode network` (coupling on) and `--spatial permuted` (structure off), graph vs edgeless vs flat; π = 0.6 and 0.9 |
+| **E3** | Uncertainty | `--forecast_sigma 0 / 0.05 / 0.10` |
+| **PV** | Sensitivity | `--pv_penetration 0.3 / 0.6 / 0.9` |
+| **E4** | Participation misspecification (evaluation only) | `evaluate_feeder.py --beta1_scale / --beta3_scale / --gamma_scale` |
+| **E5** | Physical outcome | realised voltage and overload metrics, reported for every run |
+
+- **Evaluation.** 36 held-out 2024 days: the 20th, 50th and 90th percentile of daily RRP volatility in each month, excluding the 5 validation days used for checkpoint selection, and labelled by tier and weekday/weekend. 3 paired repetitions per day. Report seed-level statistics (IQM, bootstrap CIs over seeds) and pre-penalty economics separately from penalties.
+- **Diagnostics (to port).** Neighbour-sensitivity test and attention entropy, as run on the legacy checkpoints.
+
+## 7. Validation tests (`tests/`, local; `tests/` is gitignored)
+
+`test_feeder_env.py` (8 checks, all passing):
+1. Power flow converges and the background stays within limits on sample days.
+2. DOEs are jointly feasible under the forecast (all hubs at their DOE stay within voltage and thermal limits).
+3. Hosting capacity is never tighter than the DOE, and coupling exists on a high-PV day.
+4. The permuted mode preserves each step's distribution.
+5. The projection formula is exact; SoC stays in range; participants are never short.
+6. The terminal term is non-negative and charged once.
+7. The LP bound dominates every baseline.
+8. The NumPy power flow matches EV2Gym's `GridTensor`.
+
+`test_energy_model.py`: 16 checks (coupled/legacy energy model, Oracle Monte Carlo, edgeless isolation, vectorised SAC update equivalence, config safeguard).
 
 ## 8. Data and assumptions (all disclosed)
 
 | Item | Source | Note |
 |---|---|---|
-| RRP | AEMO DISPATCHPRICE (NEMOSIS) | existing pipeline |
-| Demand shape | AEMO DISPATCHREGIONSUM, VIC1 | same dates as RRP |
-| PV shape | AEMO ROOFTOP_PV_ACTUAL, VIC1 | 30-min, interpolated |
-| Feeder | EV2Gym/RL-ADN 34-node | stylised mapping of real hubs |
-| Sessions | ElaadNL public (via EV2Gym) | Dutch; no public Australian equivalent identified yet |
-| EV models | EV2Gym V2G-enabled 2024 specs | real discharge limits |
-| Hubs | OpenChargeMap (existing) | V2G capability assumed |
-| Participation | existing logistic (β, γ) | uncalibrated, so E4 sensitivity is run |
+| RRP | AEMO DISPATCHPRICE (NEMOSIS) | June 2022 market suspension (12–24 Jun) excluded from training |
+| Demand, PV shapes | AEMO DISPATCHREGIONSUM, ROOFTOP_PV_ACTUAL, VIC1 | same dates as RRP; PV normalised per year |
+| Feeder | EV2Gym/RL-ADN 34-node | stylised placement of real hubs; thermal ratings by design rule |
+| Sessions | ElaadNL public (via EV2Gym) | Dutch; no public Australian equivalent identified |
+| EV models | EV2Gym V2G-enabled 2024 specs | real V2G discharge limits |
+| Hubs | OpenChargeMap | V2G capability assumed |
+| Participation | logistic (β, γ as in §4.5) | uncalibrated, so E4 sensitivity is run |
 
-Training-period caveat: exclude the June 2022 market suspension window from training days.
+## 9. Code
+- `nem_env/grid_profiles.py`, `feeder.py`, `powerflow.py`, `sessions.py`, `feeder_env.py`
+- `baselines/feeder_baselines.py`
+- `train_sac_gnn.py --env feeder` (+ `--doe_mode --spatial --forecast_sigma --pv_penetration --graph`)
+- `evaluate_feeder.py`
+- `slurm/train_feeder_pack.sh`, `slurm/evaluate_feeder.sh`, `slurm/benchmark_train_speed.sh`
 
-## 9. Code structure
-- `nem_env/feeder.py`: network load, hub mapping, power flow, DOE computation, electrical graph.
-- `nem_env/sessions.py`: arrivals, EV sampling, opt-in, allocation, feasibility projection.
-- `nem_env/feeder_env.py`: `NEMFeederEnv` (gym API; flags for E2/E3 ablations).
-- `nem_env/aemo_loader.py` extension: demand and PV tables alongside RRP.
-- `baselines/mpc/perfect_foresight_lp.py`; Greedy/RulePrice/Myopic Oracle adapted.
-- Agents: parametric `node_feature_dim`; per-hub capacity scaling.
-- `train_sac_gnn.py` / `evaluate.py`: `--env feeder`, held-out day sets, the new metrics.
+## 10. Compute and timeline
+- **Measured on the L40S** (benchmark job 60746661):
+  - SAC-GNN 20.4 ms/step (2.4 h per 1,500 episodes); SAC-GCN 16.1 ms; SAC-Flat 6.7 ms.
+  - Four runs packed on one GPU: 24–29 ms/step each (≈3× throughput).
+  - The feeder env adds about 25 min per run for per-date DOE computation.
+  - Packed jobs request 8 h.
+- **Plan:**
+  1. λ pilot: λ_doe ∈ {0.5, 2, 10} $/kWh, 300 episodes (job 60757441).
+  2. Choose the **smallest λ whose limit violations are no worse than NoV2G's**.
+  3. E1 (5 seeds), then E2, E3, PV, E4.
+  4. Diagnostics.
+  5. Writing.
+- **Fallback.** If the feeder results are not ready by **20 Oct**, the thesis reports the corrected legacy/coupled study and moves the redesign to future work.
 
-## 10. Timeline and decision points
-| Date | Milestone |
-|---|---|
-| 6–7 Oct | feeder.py + AEMO data + calibration; sessions.py; tests |
-| 8–9 Oct | feeder_env.py, agents, baselines, LP; full test suite |
-| 9–10 Oct | throughput benchmark on the new env; λ pilot |
-| 10–15 Oct | E1–E3 training (packed jobs); fallback coupled batch runs in parallel |
-| 15–17 Oct | evaluation E1–E5, diagnostics |
-| **20 Oct** | last point to fall back to the coupled re-run; anything unfinished goes to limitations |
-| 17–24 Oct | writing |
-
-## 11. Decisions needed
-1. Approve the stylised 34-bus mapping of real hubs (vs. waiting for real DNSP network data, which is not available in time).
-2. PV penetration default 0.6 and forecast error 5%: accept as defaults with sensitivity?
-3. `sessions_per_port_per_day` = 2.5 (ElaadNL public-charger order of magnitude): accept?
-4. Unmet-energy cost λ_u (proposal: $1/kWh, about 2–3× a public charging tariff).
-5. Seeds: 3 (safe) or 5 (if packing allows).
+## 11. Decisions taken
+1. Stylised placement of real hubs on the 34-node test feeder: accepted, and disclosed.
+2. PV penetration 0.6 (sensitivity 0.3 / 0.9) and forecast error 5% (sensitivity 0 / 10%).
+3. 2.5 offered sessions per port per day.
+4. Unmet-energy cost λ_u = $1/kWh.
+5. 5 seeds per configuration (affordable after the speed-up).
