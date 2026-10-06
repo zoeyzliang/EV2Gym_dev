@@ -134,7 +134,11 @@ Example (one day, seed 1):
 | **E4** | Participation misspecification (evaluation only) | `evaluate_feeder.py --beta1_scale / --beta3_scale / --gamma_scale` |
 | **E5** | Physical outcome | realised voltage and overload metrics, reported for every run |
 
-- **Evaluation.** 36 held-out 2024 days: the 20th, 50th and 90th percentile of daily RRP volatility in each month, excluding the 5 validation days used for checkpoint selection, and labelled by tier and weekday/weekend. 3 paired repetitions per day. Report seed-level statistics (IQM, bootstrap CIs over seeds) and pre-penalty economics separately from penalties.
+- **Evaluation.** Held-out 2024 days, never including the 5 validation days used for checkpoint selection. 3 paired repetitions per day. Report seed-level statistics (IQM, bootstrap CIs over seeds) and pre-penalty economics separately from penalties.
+  **Pre-registered day-selection rule** (7 Oct 2026, written before the completed Aug–Dec 2024 prices were inspected; the pilot evaluation showed that per-month percentiles alone select no volatile or extreme day):
+  - **Representative set (main results):** for each of the 12 months, the days at the 20th, 50th and 90th percentile of that month's daily RRP standard deviation. That is 36 days, labelled by volatility tier (calm < $100/MWh ≤ normal < $500 ≤ volatile < $2,000 ≤ extreme, the curriculum thresholds) and weekday/weekend.
+  - **Stress set (reported separately):** every remaining 2024 day with daily RRP standard deviation ≥ $500/MWh (the volatile and extreme tiers). If there are more than 8, the 8 with the highest standard deviation. As in the draft, stress results are never pooled with representative results.
+  - **λ selection (§10)** uses the representative set only.
 - **Diagnostics (to port).** Neighbour-sensitivity test and attention entropy, as run on the legacy checkpoints.
 
 ## 7. Validation tests (`tests/`, local; `tests/` is gitignored)
@@ -179,6 +183,14 @@ Example (one day, seed 1):
 - **Plan:**
   1. λ pilot: λ_doe ∈ {0.5, 2, 10} $/kWh, 300 episodes (job 60757441).
   2. Choose the **smallest λ whose limit violations are no worse than NoV2G's**.
+     **Pre-registered criterion** (recorded 7 Oct 2026, before the per-run
+     pilot data were analysed):
+     - **Unit of comparison.** One paired (day, repetition) episode. Every agent faces the identical environment realisation (same seed).
+     - **Measure.** d = limit_viol_kwh(λ-agent) − limit_viol_kwh(NoV2G) per paired episode; mean d with a 95% bootstrap CI (10,000 resamples over the paired episodes).
+     - **"No worse than NoV2G"** means the CI's upper bound is ≤ 0.5 kWh/day: a margin of about 3% of NoV2G's ~15 kWh/day, set in advance as practically negligible.
+     - **Choice.** Among the λ values meeting this, take the smallest. If none meets it, take the λ with the smallest mean d and report that compliance is not matched.
+     - **Reporting.** Pre-penalty profit (arbitrage_profit) relative to NoV2G is reported for every λ with the same paired CI, but does not decide λ.
+     - **Data.** Applied to the pilot evaluation on the full stratified evaluation set (36 days), after the 2024 price data are completed (§8).
   3. E1 (5 seeds), then E2, E3, PV, E4.
   4. Diagnostics.
   5. Writing.
