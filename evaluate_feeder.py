@@ -38,7 +38,7 @@ from baselines.gnn_rl.agent import SACGNNAgent
 from baselines.gnn_rl.sac_gcn import SACGCNAgent
 from baselines.flat_mlp.sac_flat import SACFlatAgent
 from baselines.gnn_rl.networks import NetworkConfig
-from baselines.feeder_baselines import NoV2GBaseline, GreedyTOUBaseline, perfect_foresight_bound
+from baselines.feeder_baselines import NoV2GBaseline, GreedyTOUBaseline, RulePriceBaseline, perfect_foresight_bound
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
 logger = logging.getLogger(__name__)
@@ -163,7 +163,8 @@ def main():
 
     train_prices = pd.read_parquet(f"{cfg['cache_dir']}/{cfg['region']}_{cfg['price_start']}_{cfg['price_end']}.parquet")
     agents = [("NoV2G", NoV2GBaseline(env.H)),
-              ("GreedyTOU", GreedyTOUBaseline.from_training_prices(env.H, train_prices))]
+              ("GreedyTOU", GreedyTOUBaseline.from_training_prices(env.H, train_prices)),
+              ("RulePrice", RulePriceBaseline(env.H))]
     expected = {k: cfg[k] for k in ENV_KEYS}
     for spec in args.agent:
         agents.append(load_learned(spec, env, road_graph, expected, args.skip_config_check))

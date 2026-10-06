@@ -5,7 +5,8 @@ Distribution-feeder model for the feeder-grounded DOE environment
 (docs/env_redesign_spec.md §4.1–4.3).
 
 * Network: the 34-node radial feeder shipped with EV2Gym (from RL-ADN),
-  solved with EV2Gym's tensor power flow (GridTensor).
+  solved with the same tensor power flow as EV2Gym's GridTensor
+  (re-implemented in nem_env/powerflow.py, without numba/pandapower).
 * Hubs are placed on feeder buses by a stylised, disclosed rule: hubs further
   from the zone centre go to buses electrically further from the substation.
 * Background load and rooftop PV per bus follow AEMO regional shapes for the
@@ -26,12 +27,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-# pandapower 2.13 (imported by EV2Gym's grid utilities) uses np.Inf, removed
-# in numpy 2. Restore the alias before importing; no other behaviour changes.
-if not hasattr(np, "Inf"):
-    np.Inf = np.inf
-
-from ev2gym.models.grid_utility.grid_tensor import GridTensor  # noqa: E402
+from .powerflow import TensorPowerFlow
 
 _NET_DIR = Path(__file__).resolve().parent.parent / "ev2gym" / "data" / "network_data"
 
@@ -68,7 +64,9 @@ class Feeder:
         lines_csv = _NET_DIR / n / f"Lines_{n.split('_')[1]}.csv"
         self.nodes = pd.read_csv(nodes_csv)
         self.lines = pd.read_csv(lines_csv)
-        self.grid = GridTensor(str(nodes_csv), str(lines_csv))
+        # Same algorithm/model as EV2Gym's GridTensor, without its numba /
+        # pandapower dependencies (see nem_env/powerflow.py).
+        self.pf = TensorPowerFlow(self.nodes, self.lines)
 
         # Non-slack buses (power-flow vectors exclude the slack bus 1)
         self.bus_ids = self.nodes["NODES"].to_numpy()[1:]
@@ -197,11 +195,10 @@ class Feeder:
         """
         P = np.atleast_2d(P); Q = np.atleast_2d(Q)
         vs = self.cfg.v_slack
-        sol = self.grid.run_pf(active_power=P / vs**2, reactive_power=Q / vs**2,
-                               algorithm="tensor")
-        if not sol["convergence"]:
+        v, converged = self.pf.solve(P / vs**2, Q / vs**2)
+        if not converged:
             raise RuntimeError("power flow did not converge")
-        return vs * np.abs(np.asarray(sol["v"])).reshape(P.shape)
+        return vs * np.abs(v).reshape(P.shape)
 
     def with_hubs(self, P_bg, hub_p):
         """Add hub net flows (…, H) to background bus powers (…, nb)."""

@@ -7,7 +7,7 @@
 #SBATCH --constraint=L40S
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
-#SBATCH --time=3-00:00:00
+#SBATCH --time=08:00:00
 #SBATCH --output=/scratch2/fr57/zlia0072/ev2gym_training/logs/slurm_%j_%x.out
 #SBATCH --error=/scratch2/fr57/zlia0072/ev2gym_training/logs/slurm_%j_%x.err
 
@@ -16,8 +16,10 @@
 # leaves the GPU mostly idle (sacct of the 20260904 batch), so packing runs
 # multiplies throughput under the 4-concurrent-GPU-job limit.
 #
-# Time limit: provisional 3 days until benchmark_train_speed.sh reports the
-# post-speed-up step time; then set to measured runtime + ~30%.
+# Time limit: benchmark_train_speed.sh (job 60746661, L40S) measured 20 ms/step
+# for one SAC-GNN run (2.4 h per 1500 episodes) and 24-29 ms/step with four
+# runs packed (~3.5 h). Adding the feeder env's per-date DOE computation
+# (~25 min per run) gives ~4.5 h; 8 h leaves headroom for 32-hub runs.
 #
 # Usage:
 #   sbatch --job-name=<name> slurm/train_feeder_pack.sh "<runs>" <batch_tag> [extra train args...]

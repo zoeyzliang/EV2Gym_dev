@@ -59,6 +59,29 @@ class GreedyTOUBaseline:
         return np.append(np.full(self.H, d), self.c).astype(np.float32)
 
 
+class RulePriceBaseline:
+    """
+    Port of the draft's RuleBasedPricing baseline (baselines/heuristics/
+    rule_based_pricing.py) to the feeder env: offer a fixed share of the
+    current spot price as the incentive, and discharge at full setpoint when
+    RRP exceeds that incentive, otherwise charge at full setpoint. Reads RRP
+    from node feature 11 (RRP / 1000).
+    """
+    name = "RulePrice"
+    needs_env = False
+
+    def __init__(self, n_hubs: int, price_fraction: float = 0.5, price_min: float = 0.0,
+                 price_max: float = 0.50, node_feature_dim: int = 17, rrp_feature: int = 11):
+        self.H, self.frac, self.pmin, self.pmax = n_hubs, price_fraction, price_min, price_max
+        self.F, self.k = node_feature_dim, rrp_feature
+
+    def select_action(self, obs, deterministic=True):
+        rrp = float(np.asarray(obs).reshape(self.H, self.F)[0, self.k]) * 1000.0
+        c = float(np.clip(self.frac * max(rrp, 0.0) / 1000.0, self.pmin, self.pmax))
+        d = 1.0 if rrp > c * 1000.0 else -1.0
+        return np.append(np.full(self.H, d), c).astype(np.float32)
+
+
 # ----------------------------------------------------------------------
 # Perfect-foresight LP
 # ----------------------------------------------------------------------
