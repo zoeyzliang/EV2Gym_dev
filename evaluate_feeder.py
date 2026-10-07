@@ -44,7 +44,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 ENV_KEYS = ("env", "doe_mode", "spatial", "forecast_sigma", "pv_penetration", "kappa_load", "graph",
-            "action_scale")
+            "action_scale", "participant_billing")
 
 
 def parse_args():
@@ -53,6 +53,8 @@ def parse_args():
                    help="NAME=TYPE:CHECKPOINT, TYPE in sac_gnn|sac_gcn|sac_flat (repeatable)")
     p.add_argument("--doe_mode", default="per_hub", choices=["per_hub", "network"])
     p.add_argument("--spatial", default="feeder", choices=["feeder", "permuted"])
+    p.add_argument("--participant_billing", action="store_true",
+                   help="bill participants for their energy (must match training)")
     p.add_argument("--action_scale", default="capacity", choices=["capacity", "feasible"],
                    help="must match training (checked against each checkpoint's config)")
     p.add_argument("--forecast_sigma", type=float, default=DEFAULT_CONFIG["forecast_sigma"])
@@ -62,6 +64,11 @@ def parse_args():
     p.add_argument("--max_days", type=int, default=None, help="limit days (smoke tests)")
     p.add_argument("--lp", action="store_true", help="compute the perfect-foresight LP bound")
     p.add_argument("--lp_reps", type=int, default=1, help="repetitions per day for the LP bound")
+    p.add_argument("--mpc_incentive", type=float, default=None,
+                   help="add the forecast MPC baseline (AEMO predispatch prices) with this constant "
+                        "incentive ($/kWh, chosen on validation days, spec §5)")
+    p.add_argument("--mpc_perfect", action="store_true",
+                   help="also add the perfect-price MPC diagnostic (realised prices, same incentive)")
     p.add_argument("--results_dir", required=True)
     p.add_argument("--skip_config_check", action="store_true")
     # E4 (spec §6): evaluate trained policies when owners respond differently
@@ -162,7 +169,7 @@ def run_episode(env, agent, date, seed):
     if info.get("date") != date:
         raise RuntimeError(f"requested {date} but the env loaded {info.get('date')} "
                            "(PriceLoader falls back to a random day for incomplete dates)")
-    keys = ["r_wholesale", "r_incentive", "p_unmet", "p_limit", "p_terminal", "arbitrage_profit",
+    keys = ["r_wholesale", "r_billing", "r_incentive", "p_unmet", "p_limit", "p_terminal", "arbitrage_profit",
             "limit_viol_kwh", "v_viol_pu", "overload_kw", "unmet_part_kwh", "unmet_nonpart_kwh",
             "arrivals", "opt_in", "discharged_kwh"]
     acc = {k: 0.0 for k in keys}
@@ -200,6 +207,7 @@ def main():
     out = Path(args.results_dir); out.mkdir(parents=True, exist_ok=True)
     cfg = dict(DEFAULT_CONFIG)
     cfg.update(env="feeder", doe_mode=args.doe_mode, spatial=args.spatial, action_scale=args.action_scale,
+               participant_billing=args.participant_billing,
                forecast_sigma=args.forecast_sigma, pv_penetration=args.pv_penetration, graph=args.graph)
     env, road_graph, hubs = make_env(cfg, split="eval", seed=0)
     pm = env.participation_model
@@ -224,6 +232,13 @@ def main():
     agents = [("NoV2G", NoV2GBaseline(env.H)),
               ("GreedyTOU", GreedyTOUBaseline.from_training_prices(env.H, train_prices)),
               ("RulePrice", RulePriceBaseline(env.H))]
+    if args.mpc_incentive is not None:
+        from baselines.forecast_mpc import ForecastMPC
+        from nem_env.predispatch import Predispatch
+        pdx = Predispatch.load_cache(f"{cfg['cache_dir']}/{cfg['region']}_predispatch_2024.parquet")
+        agents.append(("MPC-Predispatch", ForecastMPC(env, args.mpc_incentive, pdx)))
+        if args.mpc_perfect:
+            agents.append(("MPC-PerfectPrice", ForecastMPC(env, args.mpc_incentive, None)))
     expected = {k: cfg[k] for k in ENV_KEYS}
     for spec in args.agent:
         agents.append(load_learned(spec, env, road_graph, expected, args.skip_config_check))

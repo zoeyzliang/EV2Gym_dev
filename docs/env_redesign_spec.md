@@ -90,6 +90,10 @@ Session sampling mirrors EV2Gym's public scenario (ElaadNL distributions shipped
 - **Unmet energy.** λ_u = $1/kWh short of target at departure, for **all** customers (non-participants can be short when throttled).
 - **P_limit.** Per-hub mode: λ_doe × kWh of realised net-site-flow violation. Network mode: λ_doe × kWh of section overload + λ_v × pu voltage violation. **λ_doe is chosen by the pilot (§10).**
 - **Terminal term.** Energy participants still need at the end of the day is charged at the day's mean RRP, so draining batteries late in the day is not free.
+- **Participant billing** (`--participant_billing`; added 8 Oct 2026, after E1 v1 and before any v2 run). In v1 the aggregator bought all of a participant's charging and nobody paid it back, while non-participants' energy was a pass-through. Participants therefore charged for free, every extra participant added its whole energy bill, and the best incentive was pushed towards $0 (the LP chose $0 on 65 of 108 representative episodes, and the MPC chose $0 on validation). The opt-in model, which responds only to the discharge incentive, is inconsistent with free charging.
+  - **Rule:** each participant pays for the energy it asked for, up to what it received, i.e. (min(E_dep, target) − E_arr)⁺ / η. The price is the day's mean RRP, the terminal-cost convention. It is billed at departure, or for the whole request if still connected at the end of the day.
+  - **Effect:** for a given set of participants the bill is a constant (targets are met), so it changes no dispatch incentive. It changes the reward level and the economics of the incentive decision. `r_billing` is reported and included in `arbitrage_profit` and `net_economic`.
+  - **Verified:** default off reproduces v1 bit-for-bit. With billing on, the LP bound, the MPC and the env agree: MPC with perfect prices stays below the LP bound in every check, and the bill is identical across policies at a given incentive.
 
 ### 4.8 Observation (17 features per hub; global values broadcast)
 1. Import limit / capacity
@@ -140,6 +144,9 @@ Session sampling mirrors EV2Gym's public scenario (ElaadNL distributions shipped
 | **GreedyTOU** | Discharge at full setpoint when RRP ≥ $264/MWh, charge when ≤ $9/MWh (90th/25th percentiles of the 2022–23 *training* prices), otherwise idle; incentive $0.15/kWh. |
 | **RulePrice** | Port of the draft's baseline: incentive = 50% of RRP (capped), discharge if RRP > incentive, else charge. |
 | **Perfect-foresight LP** | Upper bound over constant-incentive policies. Knowing the day's prices, arrivals, opt-ins and limits, it solves the optimal per-EV schedule (HiGHS via SciPy). It is solved for c ∈ {0, 0.1, …, 0.5} and the best is kept; about 5–6 s per LP. Caveat: the RL agent may vary the incentive over time, which can change who opts in, so this bounds constant-incentive policies. |
+
+| **Forecast MPC** (`baselines/forecast_mpc.py`, added 8 Oct 2026) | What a real aggregator could run. Every 30 min it solves a shrinking-horizon LP to the end of the day for the connected participants and follows the plan until the next re-plan. **Information at each decision:** the current interval's RRP; for later intervals, the latest AEMO **predispatch** run published at least 5 min before the interval starts (`nem_env/predispatch.py`, full 2024 run history from NEMweb MMSDM, 48 runs/day); connected EVs' energy, departure and target (declared at plug-in); the day's DOE schedule (published day-ahead). It does not know future arrivals or opt-ins. **Incentive:** constant, chosen on the validation days by `select_mpc_incentive.py` (grid 0–0.5, mean reward on the normal validation days). Chosen: $0.0 with v1 accounting, **$0.2 with participant billing**. |
+| **MPC-PerfectPrice** (diagnostic) | Same controller with realised prices. With the LP bound and MPC-Predispatch it separates the value of price foresight from that of arrival foresight. |
 
 Example (one day, seed 1):
 - 13 Feb 2024 (spike to $16,600/MWh): GreedyTOU −$1,356, LP bound +$3,188. Greedy discharges early and must recharge during the same multi-hour spike, which is evidence of intertemporal structure (M7).

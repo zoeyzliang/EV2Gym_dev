@@ -58,6 +58,11 @@ class FeederEnvConfig:
     #   "feasible": a ∈ [0, 1] → 0 … max participant discharge,
     #               a ∈ [-1, 0] → 0 … max participant charge (0 = idle).
     action_scale: str = "capacity"
+    # Participants pay for the energy they asked for (up to what they got) at
+    # the day's mean RRP, like the terminal-cost convention, so the
+    # aggregator earns only from flexibility. False (v1): the aggregator buys
+    # participants' charging and nobody pays it back (free charging).
+    participant_billing: bool = False
     feeder: FeederConfig = field(default_factory=lambda: FeederConfig(kappa_load=0.7, pv_penetration=0.6))
     sessions: SessionConfig = field(default_factory=SessionConfig)
 
@@ -241,7 +246,10 @@ class NEMFeederEnv(gym.Env):
         else:
             p_limit = (self.cfg.lambda_doe * phys["overload_kw"] * dt
                        + self.cfg.lambda_v * phys["v_viol_pu"])
-        reward = r_wholesale - r_incentive - p_unmet - p_limit
+        mean_rrp = max(0.0, float(np.mean(self._rrp)))
+        r_billing = (mean_rrp * dep["billed_part_kwh"] / hs.cfg.eta / 1000.0
+                     if self.cfg.participant_billing else 0.0)
+        reward = r_wholesale + r_billing - r_incentive - p_unmet - p_limit
 
         self._t += 1
         terminated = self._t >= self.STEPS
@@ -250,8 +258,14 @@ class NEMFeederEnv(gym.Env):
             # charge it at the day's mean price so draining batteries late
             # in the day is not free.
             still_needed = np.sum(np.maximum(0.0, hs.target - hs.E) * hs.part * hs.occ) / hs.cfg.eta
-            p_terminal = max(0.0, float(np.mean(self._rrp))) * still_needed / 1000.0
+            p_terminal = mean_rrp * still_needed / 1000.0
             reward -= p_terminal
+            if self.cfg.participant_billing:
+                # participants still connected are billed for their whole request
+                owed = np.sum(np.maximum(0.0, hs.target - hs.e_arr) * hs.part * hs.occ) / hs.cfg.eta
+                r_end = mean_rrp * owed / 1000.0
+                r_billing += r_end
+                reward += r_end
         else:
             p_terminal = 0.0
 
@@ -259,7 +273,8 @@ class NEMFeederEnv(gym.Env):
             "rrp": rrp, "incentive_price": price,
             "r_wholesale": r_wholesale, "r_incentive": r_incentive,
             "p_unmet": p_unmet, "p_limit": p_limit, "p_terminal": p_terminal,
-            "arbitrage_profit": r_wholesale - r_incentive,
+            "r_billing": r_billing,
+            "arbitrage_profit": r_wholesale + r_billing - r_incentive,
             "limit_viol_kwh": float(viol_kw.sum() * dt), "limit_compliant": bool(viol_kw.max() <= 1e-6),
             "v_min": phys["v_min"], "v_max": phys["v_max"], "v_viol_pu": phys["v_viol_pu"],
             "overload_kw": phys["overload_kw"],

@@ -141,7 +141,7 @@ def record_day(env, date: str, seed: int, incentive: float):
 
 
 def perfect_foresight_lp(sessions, rrp, lim_imp, lim_exp, *, eta=0.95, dt=5 / 60,
-                         soc_min=0.2, lambda_unmet=1.0, T=288):
+                         soc_min=0.2, lambda_unmet=1.0, T=288, participant_billing=False):
     """
     Optimal day-ahead dispatch with full knowledge (spec §5).
 
@@ -185,6 +185,16 @@ def perfect_foresight_lp(sessions, rrp, lim_imp, lim_exp, *, eta=0.95, dt=5 / 60
     # Terminal cost for sessions still connected at T: (target − E_T)+ / η · mean_rrp/1000.
     # Handled with an extra slack per such session: v_i ≥ target − E_T, v_i ≥ 0.
     open_ids = [i for i, s in enumerate(sessions) if s.t_dep > T and s.part]
+    # Participant billing (env option): each participant pays mean_rrp/η per
+    # kWh of its request, less any unmet energy -> a constant plus a cost on u.
+    bill_const = 0.0
+    if participant_billing:
+        p_kwh = mean_rrp / 1000.0 / eta
+        for i, s in enumerate(sessions):
+            if s.part:
+                bill_const += p_kwh * max(0.0, s.target - s.e_arr)
+                if s.t_dep <= T:
+                    cost[n_x + i] += p_kwh
     n_v = len(open_ids)
     cost = np.concatenate([cost, np.full(n_v, mean_rrp / 1000.0 / eta)])
     n_tot = n + n_v
@@ -243,7 +253,7 @@ def perfect_foresight_lp(sessions, rrp, lim_imp, lim_exp, *, eta=0.95, dt=5 / 60
     res = linprog(cost, A_ub=A, b_ub=np.array(rhs_ub), bounds=bounds, method="highs")
     if res.status != 0:
         return float("nan"), res.message
-    return float(-res.fun), "optimal"
+    return float(-res.fun) + bill_const, "optimal"
 
 
 def perfect_foresight_bound(env, date: str, seed: int, incentives=(0.0, 0.1, 0.2, 0.3, 0.4, 0.5)):
@@ -254,7 +264,8 @@ def perfect_foresight_bound(env, date: str, seed: int, incentives=(0.0, 0.1, 0.2
         v, status = perfect_foresight_lp(sessions, rrp, li, le,
                                          eta=env.sessions.cfg.eta, dt=env.DT_HR,
                                          soc_min=env.sessions.cfg.soc_min,
-                                         lambda_unmet=env.cfg.lambda_unmet, T=env.STEPS)
+                                         lambda_unmet=env.cfg.lambda_unmet, T=env.STEPS,
+                                         participant_billing=env.cfg.participant_billing)
         if np.isfinite(v) and v > best[0]:
             best = (v, c)
     return best

@@ -126,6 +126,7 @@ DEFAULT_CONFIG = {
     "doe_mode": "per_hub",          # per_hub | network
     "spatial": "feeder",            # feeder | permuted
     "action_scale": "capacity",     # feeder env: capacity (v1) | feasible (spec §4.6)
+    "participant_billing": False,   # feeder env: participants pay for their energy (spec §4.7)
     "reward_scale": None,           # None: legacy running-std normalisation; number: clip(k·r, ±10)
     "alpha_min": 0.05,              # floor on the SAC entropy weight
     "forecast_sigma": 0.05,
@@ -257,6 +258,9 @@ def parse_args():
                         help="feeder env: per-hub DOEs (pre-allocated) or network-aware limits")
     parser.add_argument("--spatial", type=str, default="feeder", choices=["feeder", "permuted"],
                         help="feeder env: keep spatial DOE structure or permute it across hubs")
+    parser.add_argument("--participant_billing", action="store_true",
+                        help="feeder env: bill participants for their requested energy at the day's "
+                             "mean RRP (default: v1 free charging)")
     parser.add_argument("--reward_scale", type=float, default=None,
                         help="store clip(k·reward, ±10) instead of the running-std normalisation "
                              "(all agents identically); default: legacy behaviour")
@@ -295,6 +299,7 @@ def _make_feeder_env(cfg, split, seed, road_graph, hub_configs, loader, model):
         doe_mode=cfg["doe_mode"],
         spatial=cfg["spatial"],
         action_scale=cfg.get("action_scale", "capacity"),
+        participant_billing=cfg.get("participant_billing", False),
         forecast_sigma=cfg["forecast_sigma"],
         lambda_unmet=cfg["lambda_unmet"],
         feeder=FeederConfig(kappa_load=cfg["kappa_load"], pv_penetration=cfg["pv_penetration"]),
@@ -308,7 +313,7 @@ def _make_feeder_env(cfg, split, seed, road_graph, hub_configs, loader, model):
         graph = graph.self_loops_only()
     logger.info(
         f"Feeder env: doe_mode={env_cfg.doe_mode}, spatial={env_cfg.spatial}, "
-        f"sigma={env_cfg.forecast_sigma}, pv={env_cfg.feeder.pv_penetration}, action_scale={env_cfg.action_scale}, "
+        f"sigma={env_cfg.forecast_sigma}, pv={env_cfg.feeder.pv_penetration}, action_scale={env_cfg.action_scale}, billing={env_cfg.participant_billing}, "
         f"lambda_doe={env_cfg.lambda_doe}, graph={graph.zone_name} ({graph.n_edges} edges)"
     )
     return env, graph, hub_configs
@@ -1062,6 +1067,7 @@ if __name__ == "__main__":
     cfg["doe_mode"] = args.doe_mode
     cfg["spatial"] = args.spatial
     cfg["action_scale"] = args.action_scale
+    cfg["participant_billing"] = args.participant_billing
     cfg["reward_scale"] = args.reward_scale
     cfg["alpha_min"] = args.alpha_min
     cfg["graph"] = args.graph

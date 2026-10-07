@@ -109,6 +109,7 @@ class HubSessions:
         self.p_ch = np.zeros(P)              # max charge power kW
         self.p_dis = np.zeros(P)             # max discharge power kW
         self.rate = np.zeros(P)              # contracted incentive $/kWh discharged
+        self.e_arr = np.zeros(P)             # stored energy at arrival kWh (participant billing)
 
     # ------------------------------------------------------------------
     # Arrivals and departures
@@ -130,7 +131,10 @@ class HubSessions:
         """Release ports whose session ends at step t; return shortfalls (kWh)."""
         leaving = self.occ & (self.dep <= t)
         short = np.maximum(0.0, self.target - self.E) * leaving
+        # energy a leaving participant is billed for: what it asked for, up to what it got
+        billed = np.maximum(0.0, np.minimum(self.E, self.target) - self.e_arr) * leaving * self.part
         out = {
+            "billed_part_kwh": float(billed.sum()),
             "unmet_part_kwh": np.bincount(self.port_hub, weights=short * self.part, minlength=self.H),
             "unmet_nonpart_kwh": np.bincount(self.port_hub, weights=short * ~self.part, minlength=self.H),
             "departures": int(leaving.sum()),
@@ -188,6 +192,7 @@ class HubSessions:
         self.dep[arriving] = t + stay
         self.cap[arriving] = cap
         self.E[arriving] = e_arr
+        self.e_arr[arriving] = e_arr
         self.target[arriving] = target
         self.p_ch[arriving] = p_ch
         self.p_dis[arriving] = np.minimum(d.ev_pdis[k], self.port_kw[arriving])
