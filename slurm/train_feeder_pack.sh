@@ -24,9 +24,11 @@
 #
 # Usage:
 #   sbatch --job-name=<name> slurm/train_feeder_pack.sh "<runs>" <batch_tag> [extra train args...]
-#     <runs>       space-separated agent:seed[:noedge][:lc<lambda>], e.g.
+#     <runs>       space-separated agent:seed[:noedge][:lc<lambda>][:af][:rs<k>][:am<a>], e.g.
 #                  "sac_gnn:42 sac_gcn:42 sac_flat:42 sac_gnn:42:noedge"
 #                  per-run lc overrides --lambda_conf (used by the lambda pilot)
+#                  af = --action_scale feasible, rs<k> = --reward_scale k,
+#                  am<a> = --alpha_min a (interface-fix pilot, spec §4.9)
 #     <batch_tag>  results subfolder, e.g. perhub_pv0.6_sig0.05_lc1
 #     extra args   passed to every run, e.g. --doe_mode per_hub --lambda_conf 1 --episodes 1500
 #
@@ -75,6 +77,9 @@ for spec in "${RUN_LIST[@]}"; do
         case "$opt" in
             noedge) RUN_FLAGS+=(--no_edges); SUFFIX+="_noedge" ;;
             lc*)    RUN_FLAGS+=(--lambda_conf "${opt#lc}"); SUFFIX+="_$opt" ;;
+            af)     RUN_FLAGS+=(--action_scale feasible); SUFFIX+="_af" ;;
+            rs*)    RUN_FLAGS+=(--reward_scale "${opt#rs}"); SUFFIX+="_$opt" ;;
+            am*)    RUN_FLAGS+=(--alpha_min "${opt#am}"); SUFFIX+="_$opt" ;;
             *)      echo "unknown run option '$opt' in '$spec'" >&2; exit 1 ;;
         esac
     done

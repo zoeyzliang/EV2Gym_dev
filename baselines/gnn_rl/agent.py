@@ -133,7 +133,14 @@ class SACGNNAgent:
         update_every: int = 1,
         seed: Optional[int] = None,
         device: Optional[str] = None,
+        reward_scale: Optional[float] = None,
+        alpha_min: float = 0.05,
     ):
+        # reward_scale=None keeps the running-std normalisation built for the
+        # legacy env; a number stores clip(reward_scale * r, ±10) instead
+        # (feeder env, spec §4.9). alpha_min floors the entropy weight.
+        self.reward_scale = reward_scale
+        self.alpha_min = alpha_min
         self.n_hubs = n_hubs
         self.graph_data = graph_data
         self.obs_dim = obs_dim
@@ -368,6 +375,11 @@ class SACGNNAgent:
         that a bad transition occurred (direction preserved), but its
         magnitude can no longer catastrophically dominate a batch.
         """
+        if self.reward_scale is not None:
+            normalised_reward = float(np.clip(self.reward_scale * reward, -10.0, 10.0))
+            self.buffer.add(obs, action, normalised_reward, next_obs, done)
+            self._total_steps += 1
+            return
         # Update running statistics (EMA)
         self._reward_running_mean = (
             (1 - self._reward_norm_alpha) * self._reward_running_mean
@@ -447,7 +459,7 @@ class SACGNNAgent:
         # hit this because message passing gives more consistent gradient
         # signal across hubs, but the ceiling is added here too for
         # defense-in-depth since the same auto-tuner code path is shared.
-        alpha = self.log_alpha.exp().detach().clamp(min=0.05, max=2.0)
+        alpha = self.log_alpha.exp().detach().clamp(min=self.alpha_min, max=2.0)
 
         # --- Convert batch to tensors (moved to self.device — GPU if available) ---
         obs_t      = torch.tensor(batch.obs,      dtype=torch.float32, device=self.device)
@@ -539,7 +551,7 @@ class SACGNNAgent:
         # code path and are fixed here too for defense-in-depth ahead
         # of any future retraining.
         with torch.no_grad():
-            self.log_alpha.clamp_(min=np.log(0.05), max=np.log(2.0))
+            self.log_alpha.clamp_(min=np.log(self.alpha_min), max=np.log(2.0))
 
         # --- Step 4: Soft update target critics ---
         self._soft_update(self.target_critic1, self.critic1)

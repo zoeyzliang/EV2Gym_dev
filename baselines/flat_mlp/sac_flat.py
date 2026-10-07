@@ -249,7 +249,13 @@ class SACFlatAgent:
         node_feature_dim: int = 9,
         cap_feature: Optional[int] = 5,
         cap_const: Optional[float] = None,
+        reward_scale: Optional[float] = None,
+        alpha_min: float = 0.05,
     ):
+        # reward_scale=None stores the raw reward (legacy); a number stores
+        # clip(reward_scale * r, ±10), the same processing as SACGNNAgent.
+        self.reward_scale = reward_scale
+        self.alpha_min = alpha_min
         self._net_kwargs = dict(node_feature_dim=node_feature_dim,
                                 cap_feature=cap_feature, cap_const=cap_const)
         self.obs_dim = obs_dim
@@ -355,6 +361,8 @@ class SACFlatAgent:
         return action.astype(np.float32)
 
     def store_transition(self, obs, action, reward, next_obs, done):
+        if self.reward_scale is not None:
+            reward = float(np.clip(self.reward_scale * reward, -10.0, 10.0))
         self.buffer.add(obs, action, reward, next_obs, done)
         self._total_steps += 1
 
@@ -382,7 +390,7 @@ class SACFlatAgent:
         # credit assignment -> some action dims collapse -> extremely
         # negative log_probs -> alpha auto-tuner runs away trying to
         # compensate, with no natural ceiling to stop it).
-        alpha = self.log_alpha.exp().detach().clamp(min=0.05, max=2.0)
+        alpha = self.log_alpha.exp().detach().clamp(min=self.alpha_min, max=2.0)
 
         obs_t  = torch.tensor(batch.obs,      dtype=torch.float32, device=self.device)
         act_t  = torch.tensor(batch.actions,  dtype=torch.float32, device=self.device)
@@ -443,7 +451,7 @@ class SACFlatAgent:
         # still happening, just one level deeper than where the earlier
         # fix was applied).
         with torch.no_grad():
-            self.log_alpha.clamp_(min=np.log(0.05), max=np.log(2.0))
+            self.log_alpha.clamp_(min=np.log(self.alpha_min), max=np.log(2.0))
 
         # Soft update targets
         for t, o in zip(self.target_critic1.parameters(),

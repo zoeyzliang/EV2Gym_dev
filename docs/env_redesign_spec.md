@@ -110,6 +110,28 @@ Session sampling mirrors EV2Gym's public scenario (ElaadNL distributions shipped
 16. Weekend flag
 17. Time to the next DOE update
 
+### 4.9 Agent–environment interface fix (8 Oct 2026, after E1 v1)
+**Finding (E1 v1 evaluation).** At λ = 0.5, SAC-GNN, SAC-GCN and SAC-GNN-NoEdge close −4% to −1% of the gap between NoV2G and the perfect-foresight LP bound on representative days, and about 5% on stress days. Comparison is on the LP objective's terms: economics minus unmet energy, with no limit penalty. The LP's best incentive is $0 on 65 of 108 representative episodes, so the value is reachable with the participants the agents already get.
+
+**Diagnosis (training days only).**
+- **(a) Action range.** Setpoints were scaled by hub capacity, but the participants' feasible range averages 2.4% of capacity (median 0). The projection clips almost the whole action range, so most actions have identical effects.
+- **(b) Reward scale.** Per-step rewards are about $0.06 (std $0.34). The legacy running-std normaliser has a floor of 1.0, so it never rescales them, and the SAC entropy weight sits at its 0.05 floor (α = 0.0500 in every log). The entropy bonus dominates the reward. Both floors were set for the legacy env, whose rewards were thousands of times larger.
+- **(c) Flat agent confound.** SAC-Flat stored raw rewards, while SAC-GNN/GCN stored normalised and clipped rewards. So E1 v1's architecture comparison also differed in reward processing.
+
+**Fix (options; defaults reproduce v1 exactly).**
+- **A. `--action_scale feasible`:** a ∈ [0, 1] → 0 … the participants' maximum discharge; a ∈ [−1, 0] → 0 … their maximum charge; 0 = idle. The safety projection is unchanged. The ±1/0 baselines are bit-identical under both scales (verified on 4 days × 2 reps against E1 v1), so baseline and LP results stand.
+- **B. `--reward_scale 1 --alpha_min 0.001`:** every agent (GNN, GCN, Flat) stores clip(r, ±10), so all agents get identical reward processing. Under random actions on 30 training days, the 99.9th percentile of |r| is 9.2, so the clip binds on about 0.1% of steps. The entropy floor is lowered from 0.05 to 0.001, so automatic tuning can work.
+- **Evaluation** checks `action_scale` against each checkpoint's config (`ENV_KEYS`).
+
+**Pilot (pre-registered 8 Oct 2026, before any pilot data).**
+- One packed L40S job, λ = 0.5, 500 episodes: A+B at seeds 42 and 1, A only at seed 42, B only at seed 42.
+- **Measure:** best validation normal-day reward (`mean_net_profit_normal`, the training script's 4 normal validation days, seeded) within 500 episodes. **No test days are used.**
+- **References:**
+  - NoV2G on the same validation days: −10.76 $/day;
+  - the v1 λ-study runs `sac_gnn_lc0.5_seed42/seed1`: best validation value over all 1,500 episodes, **−11.8 for both** (read from the M3 logs before the pilot was submitted). v1 never beat NoV2G on validation, so NoV2G's −10.76 is the binding threshold.
+- **Decision:** adopt A+B if **both** A+B runs exceed their v1 counterpart's best **and** NoV2G. If only A or only B meets this, adopt that one alone. If neither does, keep v1 and report the failure-to-learn finding.
+- **If adopted:** rerun the λ study (9 runs) and E1 (17 new + 3 λ-study runs) under the same pre-registered λ rule and evaluation days. v1 results are kept and reported as the "capacity-scaled interface" ablation.
+
 ## 5. Baselines (`baselines/feeder_baselines.py`)
 
 | Baseline | Rule |

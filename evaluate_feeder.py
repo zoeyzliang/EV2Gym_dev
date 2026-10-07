@@ -43,7 +43,8 @@ from baselines.feeder_baselines import NoV2GBaseline, GreedyTOUBaseline, RulePri
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
 logger = logging.getLogger(__name__)
 
-ENV_KEYS = ("env", "doe_mode", "spatial", "forecast_sigma", "pv_penetration", "kappa_load", "graph")
+ENV_KEYS = ("env", "doe_mode", "spatial", "forecast_sigma", "pv_penetration", "kappa_load", "graph",
+            "action_scale")
 
 
 def parse_args():
@@ -52,6 +53,8 @@ def parse_args():
                    help="NAME=TYPE:CHECKPOINT, TYPE in sac_gnn|sac_gcn|sac_flat (repeatable)")
     p.add_argument("--doe_mode", default="per_hub", choices=["per_hub", "network"])
     p.add_argument("--spatial", default="feeder", choices=["feeder", "permuted"])
+    p.add_argument("--action_scale", default="capacity", choices=["capacity", "feasible"],
+                   help="must match training (checked against each checkpoint's config)")
     p.add_argument("--forecast_sigma", type=float, default=DEFAULT_CONFIG["forecast_sigma"])
     p.add_argument("--pv_penetration", type=float, default=DEFAULT_CONFIG["pv_penetration"])
     p.add_argument("--graph", default="electrical", choices=["electrical", "road"])
@@ -196,7 +199,7 @@ def main():
     args = parse_args()
     out = Path(args.results_dir); out.mkdir(parents=True, exist_ok=True)
     cfg = dict(DEFAULT_CONFIG)
-    cfg.update(env="feeder", doe_mode=args.doe_mode, spatial=args.spatial,
+    cfg.update(env="feeder", doe_mode=args.doe_mode, spatial=args.spatial, action_scale=args.action_scale,
                forecast_sigma=args.forecast_sigma, pv_penetration=args.pv_penetration, graph=args.graph)
     env, road_graph, hubs = make_env(cfg, split="eval", seed=0)
     pm = env.participation_model

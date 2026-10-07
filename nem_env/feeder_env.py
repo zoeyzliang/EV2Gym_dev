@@ -51,6 +51,13 @@ class FeederEnvConfig:
     lambda_unmet: float = 1.0        # $/kWh short of target at departure
     lambda_doe: float = 1.0          # $/kWh of limit violation (set by pilot)
     lambda_v: float = 100.0          # $ per pu·bus of voltage violation (network mode)
+    # How a hub's normalised setpoint maps to kW (spec §4.6).
+    #   "capacity": a·hub capacity (as built for the λ study and E1 v1). The
+    #               participants' feasible range averages ~2% of capacity, so
+    #               the projection clips almost the whole action range.
+    #   "feasible": a ∈ [0, 1] → 0 … max participant discharge,
+    #               a ∈ [-1, 0] → 0 … max participant charge (0 = idle).
+    action_scale: str = "capacity"
     feeder: FeederConfig = field(default_factory=lambda: FeederConfig(kappa_load=0.7, pv_penetration=0.6))
     sessions: SessionConfig = field(default_factory=SessionConfig)
 
@@ -68,6 +75,8 @@ class NEMFeederEnv(gym.Env):
         self.cfg = env_config or FeederEnvConfig()
         if self.cfg.doe_mode not in ("per_hub", "network"):
             raise ValueError(f"doe_mode must be 'per_hub' or 'network', got {self.cfg.doe_mode!r}")
+        if self.cfg.action_scale not in ("capacity", "feasible"):
+            raise ValueError(f"action_scale must be 'capacity' or 'feasible', got {self.cfg.action_scale!r}")
         if self.cfg.spatial not in ("feeder", "permuted"):
             raise ValueError(f"spatial must be 'feeder' or 'permuted', got {self.cfg.spatial!r}")
         self.hub_configs = hub_configs
@@ -192,7 +201,13 @@ class NEMFeederEnv(gym.Env):
         #    throttles them). Forced charging to meet departure targets
         #    overrides the limit, which is then a genuine violation.
         lim_i, lim_e = self._lim_imp[t], self._lim_exp[t]
-        q_req = -disp * self.cap
+        if self.cfg.action_scale == "feasible":
+            # + = discharge: scale by the participants' own range, so every
+            # action value is reachable (forced charging, flex_lo > 0, is
+            # still enforced by the clip to [flex_lo, flex_hi] below).
+            q_req = np.where(disp >= 0, disp * np.minimum(flex_lo, 0.0), -disp * np.maximum(flex_hi, 0.0))
+        else:
+            q_req = -disp * self.cap
         q = np.clip(q_req, -lim_e, np.maximum(0.0, lim_i - arr_fc))
         q = np.clip(q, flex_lo, flex_hi)
         u = np.clip(lim_i - arr_fc - q, 0.0, unctrl)
