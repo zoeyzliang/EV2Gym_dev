@@ -20,7 +20,7 @@
 # = ~1.7 h; 3 h allows for a slower CPU. per_run.csv is rewritten after each
 # day, so a timeout keeps the finished days. CPU-only work: the GPU type does
 # not affect the result, so the fit pool may be used to avoid the normal-QOS
-# GPU limit:  sbatch --partition=fit --qos=fitq --constraint= --gres=gpu:A100:1 ...
+# GPU limit:  sbatch --partition=fit --qos=fitq --constraint=A100-80G --gres=gpu:A100:1 ...
 #
 # Usage:  sbatch slurm/evaluate_lp_bound.sh <out_name> [env args matching training...]
 #   e.g.  sbatch slurm/evaluate_lp_bound.sh lp_bound_perhub --doe_mode per_hub

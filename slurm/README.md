@@ -39,8 +39,8 @@ including `--constraint=L40S`.
 | Pool | sbatch options | GPUs | Max wall time |
 |---|---|---|---|
 | gpu (default) | *(none: scripts default to `--constraint=L40S`)* | L40S | 7 days |
-| fit | `--partition=fit --qos=fitq --constraint= --gres=gpu:A100:1` | A100 | 1 day |
-| m3h | `--partition=m3h --qos=m3h --constraint= --gres=gpu:H100:1` | H100 | 2 days |
+| fit | `--partition=fit --qos=fitq --constraint=A100-80G --gres=gpu:A100:1` | A100 80 GB | 1 day |
+| m3h | `--partition=m3h --qos=m3h --constraint=H100 --gres=gpu:H100:1` | H100 | 2 days |
 
 GPU nodes as reported by `sinfo -p gpu,fit,m3h -o "%12P %22N %G"` (2026-10-06):
 
@@ -63,19 +63,29 @@ it, add `--test-only` to the `sbatch` line.
 **Always pin a modern GPU type.** Never submit with the constraint cleared
 and no type: on the `gpu` partition that can land on the T4 node (m3t100) or
 A40s, which is exactly what happened to the 2026-10-06 pilot. On `fit` and
-`m3h`, `--constraint=` only removes the scripts' L40S default (those
-partitions have no L40S) and `--gres=gpu:<TYPE>:1` pins the type. GRES names
-match `sinfo -o "%G"`; node feature names differ, so `--constraint=A100` is
-rejected. Results do not depend on GPU type; only wall-clock times do, and
-each pack job logs its GPU (`nvidia-smi`). Quote timings from the L40S
-benchmark.
+`m3h`, override the scripts' L40S default with that pool's node feature and
+pin the GPU with GRES. An empty `--constraint=` is **rejected by sbatch**
+("Invalid feature specification", 2026-10-07); it only works in
+`scontrol update`. Node features (`sinfo -p fit,m3h -o "%N %f %G"`, 2026-10-07):
+
+| Nodes | Features | GRES |
+|---|---|---|
+| m3u[000-008] (fit) | `A100-80G`, milan, amd | gpu:A100:4 |
+| m3u009 (fit) | `A100-40G`, amd | gpu:A100:8 |
+| m3u[010-013] (fit) | `H200-140G`, intel | gpu:H200:4 |
+| m3h[100-101,110-111] (m3h) | `H100`, intel/amd | gpu:H100:4 |
+
+`--constraint=A100` is rejected (the feature is `A100-80G`). Check a line
+with `sbatch --test-only ...` before submitting. Results do not depend on GPU
+type; only wall-clock times do, and each pack job logs its GPU (`nvidia-smi`).
+Quote timings from the L40S benchmark.
 
 Example: three seeds of E1 started at once on three pools:
 
 ```
 sbatch --job-name=fdr_s42 slurm/train_feeder_pack.sh "sac_gnn:42 sac_gcn:42 sac_flat:42 sac_gnn:42:noedge" perhub_lc<λ> --doe_mode per_hub --lambda_conf <λ>
-sbatch --partition=fit --qos=fitq --constraint= --gres=gpu:A100:1 --job-name=fdr_s1 slurm/train_feeder_pack.sh "sac_gnn:1 sac_gcn:1 sac_flat:1 sac_gnn:1:noedge" perhub_lc<λ> --doe_mode per_hub --lambda_conf <λ>
-sbatch --partition=m3h --qos=m3h --constraint= --gres=gpu:H100:1 --job-name=fdr_s2 slurm/train_feeder_pack.sh "sac_gnn:2 sac_gcn:2 sac_flat:2 sac_gnn:2:noedge" perhub_lc<λ> --doe_mode per_hub --lambda_conf <λ>
+sbatch --partition=fit --qos=fitq --constraint=A100-80G --gres=gpu:A100:1 --job-name=fdr_s1 slurm/train_feeder_pack.sh "sac_gnn:1 sac_gcn:1 sac_flat:1 sac_gnn:1:noedge" perhub_lc<λ> --doe_mode per_hub --lambda_conf <λ>
+sbatch --partition=m3h --qos=m3h --constraint=H100 --gres=gpu:H100:1 --job-name=fdr_s2 slurm/train_feeder_pack.sh "sac_gnn:2 sac_gcn:2 sac_flat:2 sac_gnn:2:noedge" perhub_lc<λ> --doe_mode per_hub --lambda_conf <λ>
 ```
 
 ## Feeder-environment batch (redesign, from 2026-10-06)
