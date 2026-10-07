@@ -5,8 +5,8 @@
 #SBATCH --qos=normal
 #SBATCH --gres=gpu:1
 #SBATCH --constraint=L40S
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=16G
 #SBATCH --time=03:00:00
 #SBATCH --output=/scratch2/fr57/zlia0072/ev2gym_training/logs/slurm_%j_%x.out
 #SBATCH --error=/scratch2/fr57/zlia0072/ev2gym_training/logs/slurm_%j_%x.err
