@@ -92,6 +92,7 @@ Session sampling mirrors EV2Gym's public scenario (ElaadNL distributions shipped
 - **Terminal term.** Energy participants still need at the end of the day is charged at the day's mean RRP, so draining batteries late in the day is not free.
 - **Participant billing** (`--participant_billing`; added 8 Oct 2026, after E1 v1 and before any v2 run). In v1 the aggregator bought all of a participant's charging and nobody paid it back, while non-participants' energy was a pass-through. Participants therefore charged for free, every extra participant added its whole energy bill, and the best incentive was pushed towards $0 (the LP chose $0 on 65 of 108 representative episodes, and the MPC chose $0 on validation). The opt-in model, which responds only to the discharge incentive, is inconsistent with free charging.
   - **Rule:** each participant pays for the energy it asked for, up to what it received, i.e. (min(E_dep, target) − E_arr)⁺ / η. The price is the day's mean RRP, the terminal-cost convention. It is billed at departure, or for the whole request if still connected at the end of the day.
+  - **Negative-mean days:** the price is max(0, day mean), as for the terminal cost. On a day whose mean RRP is ≤ 0 participants are billed nothing; a retailer would not pay customers to charge.
   - **Effect:** for a given set of participants the bill is a constant (targets are met), so it changes no dispatch incentive. It changes the reward level and the economics of the incentive decision. `r_billing` is reported and included in `arbitrage_profit` and `net_economic`.
   - **Verified:** default off reproduces v1 bit-for-bit. With billing on, the LP bound, the MPC and the env agree: MPC with perfect prices stays below the LP bound in every check, and the bill is identical across policies at a given incentive.
 
@@ -136,6 +137,17 @@ Session sampling mirrors EV2Gym's public scenario (ElaadNL distributions shipped
 - **Decision:** adopt A+B if **both** A+B runs exceed their v1 counterpart's best **and** NoV2G. If only A or only B meets this, adopt that one alone. If neither does, keep v1 and report the failure-to-learn finding.
 - **If adopted:** rerun the λ study (9 runs) and E1 (17 new + 3 λ-study runs) under the same pre-registered λ rule and evaluation days. v1 results are kept and reported as the "capacity-scaled interface" ablation.
 
+**Pilot outcome (job 60810857, 8 Oct 2026; rule applied as written): not adopted.** Best validation normal-day reward within 500 episodes, against the thresholds NoV2G −10.76 and v1 best −11.8:
+
+| Run | Best | Passes | Validation curve (10 checks) |
+|---|---|---|---|
+| A+B seed 1 | −7.5 | yes | −24.3 … −7.5 zigzag, best at the last check; no trend (best-of-10 noise) |
+| A+B seed 42 | −11.8 | no | −131.8 … −11.8; unstable (critic loss 871 at ep 500) |
+| A only seed 42 | −12.8 | no | flat −15.0 … −12.8 (stable, passive) |
+| B only seed 42 | −12.4 | no | declines to −72.1 (unstable) |
+
+Both A+B seeds were required, so the fix is not adopted and v1 remains the reference RL result. Fix A is harmless but does not produce learning. Fix B destabilises training. No further interface iteration is planned: the curves give no evidence that a reward-scale change would succeed, and further tuning would be open-ended.
+
 ## 5. Baselines (`baselines/feeder_baselines.py`)
 
 | Baseline | Rule |
@@ -173,6 +185,14 @@ Example (one day, seed 1):
   - `arbitrage_profit` and `p_terminal` are reported alongside, so the split stays visible.
   - Penalties (`p_unmet`, `p_limit`) are still reported separately and never mixed into the economic metric.
   - Implemented in `evaluate_feeder.py`: a per-episode `net_economic` column, and `net_economic` and `p_terminal` in `summary.csv`. For the λ-study files it is computed from the same columns.
+- **Benchmark and value of coordination** (recorded 8 Oct 2026, after the interface pilot was not adopted and before these full runs; checked on 2 days × 2 PV levels only).
+  - **Benchmark** (`slurm/evaluate_baselines.sh`): NoV2G, GreedyTOU, RulePrice, MPC-Predispatch, MPC-PerfectPrice and the LP bound on the pre-registered days × 3 reps. Run twice: **with participant billing** (MPC incentive 0.2, the main benchmark) and **with v1 accounting** (MPC incentive 0.0, directly comparable to the v1 RL agents, which were trained without billing).
+  - **Value of coordination, C2 answered with optimisation** (`coordination_study.py`, `baselines/coordination.py`):
+    - **Comparison:** the perfect-foresight LP with per-hub DOEs (κ*·h_i) against the same LP with the feeder's joint constraints. These are hub capacity, bus voltages in [0.95, 1.05] pu (linearised at the forecast background), and exact radial section flows, each at the 30-min window's worst-case background, as in the DOE rule.
+    - **Measure:** value of coordination = LP_network − LP_perhub (best constant incentive each), per (day, rep), at π = 0.6 and 0.9, with billing.
+    - **Checks:** the network plan is re-run through the full power flow on the forecast background (linearisation error) and on the realised background (forecast error). The per-hub path reproduces the existing LP bound exactly (26.639 on 2024-01-04, rep 0).
+    - **Two-day check:** value of coordination +0.005 to +0.07 $/day, with zero voltage or thermal violations of the network plan on the forecast background. The full runs decide whether this holds.
+  - **v1 RL agents** stay the reference RL result (§4.9 pilot not adopted) and are reported under v1 accounting.
 - **Run plan for E2, E3 and PV, in priority tiers** (recorded 7 Oct 2026, while the λ-study runs were training, before any λ-study or E1 results existed). All runs use the λ chosen by §10, `--episodes 1500`, 3 seeds (42, 1, 2), and are evaluated like E1. Lower tiers are dropped first if time runs short (fallback date 20 Oct). Dropping a tier is decided by the calendar, never by results.
   - **Tier 1 (required, 27 runs).** All at π = 0.9, where inter-hub coupling is strongest (κ* < 1 in 37% of midday windows, vs 14% at π = 0.6). SAC-GNN vs SAC-GNN-NoEdge vs SAC-Flat in each:
 

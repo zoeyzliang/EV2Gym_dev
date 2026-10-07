@@ -141,7 +141,8 @@ def record_day(env, date: str, seed: int, incentive: float):
 
 
 def perfect_foresight_lp(sessions, rrp, lim_imp, lim_exp, *, eta=0.95, dt=5 / 60,
-                         soc_min=0.2, lambda_unmet=1.0, T=288, participant_billing=False):
+                         soc_min=0.2, lambda_unmet=1.0, T=288, participant_billing=False,
+                         network=None, return_flows=False):
     """
     Optimal day-ahead dispatch with full knowledge (spec §5).
 
@@ -238,21 +239,56 @@ def perfect_foresight_lp(sessions, rrp, lim_imp, lim_exp, *, eta=0.95, dt=5 / 60
             vj = n + open_ids.index(i)
             add_row(list(acc_idx) + [vj], [-v for v in acc_val] + [-1.0], s.e_arr - s.target)
 
-    # Hub limits per step
-    for h in range(H):
-        on_h = np.array([sessions[i].hub == h for i in ci])
+    hub_of = np.array([sessions[i].hub for i in ci])
+    sgn = np.where(ck == 0, 1.0, -1.0)
+    if network is None:
+        # Hub limits per step (per-hub DOEs)
+        for h in range(H):
+            on_h = hub_of == h
+            for t in range(T):
+                m = np.where(on_h & (ct == t))[0]
+                if len(m) == 0:
+                    continue
+                sign = sgn[m]
+                add_row(list(m), list(sign), float(lim_imp[t, h]))
+                add_row(list(m), list(-sign), float(lim_exp[t, h]))
+    else:
+        # Joint feeder constraints instead of per-hub DOEs (coordination
+        # study, spec §6): hub capacity, linearised bus voltages and exact
+        # (radial, lossless) section flows, per 30-min window at the
+        # window's worst-case forecast background. y_h,t = Σ_{i on h} (c − d).
+        B = network["block"]
+        cap_h = network["hub_cap"]
+        for h in range(H):
+            on_h = hub_of == h
+            for t in range(T):
+                m = np.where(on_h & (ct == t))[0]
+                if len(m):
+                    add_row(list(m), list(sgn[m]), float(cap_h[h]))
+                    add_row(list(m), list(-sgn[m]), float(cap_h[h]))
         for t in range(T):
-            m = np.where(on_h & (ct == t))[0]
+            m = np.where(ct == t)[0]
             if len(m) == 0:
                 continue
-            sign = np.where(ck[m] == 0, 1.0, -1.0)
-            add_row(list(m), list(sign), float(lim_imp[t, h]))
-            add_row(list(m), list(-sign), float(lim_exp[t, h]))
+            w = t // B
+            for key_S, key_rhs, flip in (("S_lo", "rhs_lo", -1.0), ("S_hi", "rhs_hi", 1.0)):
+                coef = flip * network[key_S][w][:, hub_of[m]] * sgn[m][None, :]     # (nb, |m|)
+                for b in range(coef.shape[0]):
+                    add_row(list(m), list(coef[b]), float(network[key_rhs][w][b]))
+            Mh = network["Mh"][:, hub_of[m]] * sgn[m][None, :]                      # (sections, |m|)
+            for l in range(Mh.shape[0]):
+                if np.any(Mh[l]):
+                    add_row(list(m), list(Mh[l]), float(network["f_rhs_hi"][w][l]))
+                    add_row(list(m), list(-Mh[l]), float(network["f_rhs_lo"][w][l]))
 
     A = sparse.csr_matrix((A_vals, (A_rows, A_cols)), shape=(rid, n_tot))
     res = linprog(cost, A_ub=A, b_ub=np.array(rhs_ub), bounds=bounds, method="highs")
     if res.status != 0:
-        return float("nan"), res.message
+        return (float("nan"), res.message, None) if return_flows else (float("nan"), res.message)
+    if return_flows:
+        flows = np.zeros((T, H))
+        np.add.at(flows, (ct, hub_of), sgn * res.x[:n_x])
+        return float(-res.fun) + bill_const, "optimal", flows
     return float(-res.fun) + bill_const, "optimal"
 
 
