@@ -172,6 +172,9 @@ def run_episode(env, agent, date, seed):
         compliant += info["limit_compliant"]
         vmin, vmax = min(vmin, info["v_min"]), max(vmax, info["v_max"])
     acc["overload_kwh"] = acc.pop("overload_kw") * env.DT_HR
+    # Main economic metric (spec §6): pre-penalty profit net of the energy
+    # still owed to participants at the end of the day (a purchase, not a penalty).
+    acc["net_economic"] = acc["arbitrage_profit"] - acc["p_terminal"]
     return {"reward": reward, **acc, "compliance": compliant / env.STEPS,
             "opt_in_rate": acc["opt_in"] / max(1.0, acc["arrivals"]), "v_min": vmin, "v_max": vmax}
 
@@ -228,7 +231,8 @@ def main():
     df.to_csv(out / "per_run.csv", index=False)
     # Representative and stress days are summarised separately, never pooled.
     summary = df.groupby(["set", "agent"]).agg(
-        reward=("reward", "mean"), arbitrage_profit=("arbitrage_profit", "mean"),
+        reward=("reward", "mean"), net_economic=("net_economic", "mean"),
+        arbitrage_profit=("arbitrage_profit", "mean"), p_terminal=("p_terminal", "mean"),
         compliance=("compliance", "mean"), limit_viol_kwh=("limit_viol_kwh", "mean"),
         v_viol_pu=("v_viol_pu", "mean"), overload_kwh=("overload_kwh", "mean"),
         unmet_part_kwh=("unmet_part_kwh", "mean"), unmet_nonpart_kwh=("unmet_nonpart_kwh", "mean"),
