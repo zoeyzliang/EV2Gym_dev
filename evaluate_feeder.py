@@ -164,17 +164,30 @@ def run_episode(env, agent, date, seed):
             "arrivals", "opt_in", "discharged_kwh"]
     acc = {k: 0.0 for k in keys}
     reward, compliant, vmin, vmax, done = 0.0, 0, 9.0, 0.0, False
+    imp_kwh = exp_kwh = 0.0                  # participants' grid-side energy (M4 accounting)
+    prices, rrps, arrivals = [], [], []      # incentive trajectory (M9)
     while not done:
         obs, r, done, _, info = env.step(agent.select_action(obs, deterministic=True))
         reward += r
         for k in keys:
             acc[k] += info[k]
+        flex = np.asarray(info["flex_kw"])
+        imp_kwh += np.clip(flex, 0, None).sum() * env.DT_HR
+        exp_kwh += np.clip(-flex, 0, None).sum() * env.DT_HR
+        prices.append(info["incentive_price"]); rrps.append(info["rrp"]); arrivals.append(info["arrivals"])
         compliant += info["limit_compliant"]
         vmin, vmax = min(vmin, info["v_min"]), max(vmax, info["v_max"])
     acc["overload_kwh"] = acc.pop("overload_kw") * env.DT_HR
     # Main economic metric (spec §6): pre-penalty profit net of the energy
     # still owed to participants at the end of the day (a purchase, not a penalty).
     acc["net_economic"] = acc["arbitrage_profit"] - acc["p_terminal"]
+    acc["part_import_kwh"], acc["part_export_kwh"] = imp_kwh, exp_kwh
+    prices, rrps, arrivals = map(np.asarray, (prices, rrps, arrivals))
+    acc["incentive_mean"] = float(prices.mean())
+    # the offer that counts is the one made when EVs arrive (opt-in is per session)
+    acc["incentive_at_arrival"] = float((prices * arrivals).sum() / arrivals.sum()) if arrivals.sum() else np.nan
+    acc["incentive_rrp_corr"] = (float(np.corrcoef(prices, rrps)[0, 1])
+                                 if prices.std() > 1e-9 and rrps.std() > 1e-9 else np.nan)
     return {"reward": reward, **acc, "compliance": compliant / env.STEPS,
             "opt_in_rate": acc["opt_in"] / max(1.0, acc["arrivals"]), "v_min": vmin, "v_max": vmax}
 
@@ -236,7 +249,9 @@ def main():
         compliance=("compliance", "mean"), limit_viol_kwh=("limit_viol_kwh", "mean"),
         v_viol_pu=("v_viol_pu", "mean"), overload_kwh=("overload_kwh", "mean"),
         unmet_part_kwh=("unmet_part_kwh", "mean"), unmet_nonpart_kwh=("unmet_nonpart_kwh", "mean"),
-        opt_in_rate=("opt_in_rate", "mean"), runs=("reward", "size"))
+        opt_in_rate=("opt_in_rate", "mean"), incentive_at_arrival=("incentive_at_arrival", "mean"),
+        part_import_kwh=("part_import_kwh", "mean"), part_export_kwh=("part_export_kwh", "mean"),
+        runs=("reward", "size"))
     summary.to_csv(out / "summary.csv")
     json.dump(vars(args), open(out / "eval_args.json", "w"), indent=2)
     logger.info("\n" + summary.round(3).to_string())
