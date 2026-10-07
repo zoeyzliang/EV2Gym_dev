@@ -139,6 +139,21 @@ Example (one day, seed 1):
   - **Representative set (main results):** for each of the 12 months, the days at the 20th, 50th and 90th percentile of that month's daily RRP standard deviation. That is 36 days, labelled by volatility tier (calm < $100/MWh ≤ normal < $500 ≤ volatile < $2,000 ≤ extreme, the curriculum thresholds) and weekday/weekend.
   - **Stress set (reported separately):** every remaining 2024 day with daily RRP standard deviation ≥ $500/MWh (the volatile and extreme tiers). If there are more than 8, the 8 with the highest standard deviation. As in the draft, stress results are never pooled with representative results.
   - **λ selection (§10)** uses the representative set only.
+- **Run plan for E2, E3 and PV, in priority tiers** (recorded 7 Oct 2026, while the λ-study runs were training, before any λ-study or E1 results existed). All runs use the λ chosen by §10, `--episodes 1500`, 3 seeds (42, 1, 2), and are evaluated like E1. Lower tiers are dropped first if time runs short (fallback date 20 Oct). Dropping a tier is decided by the calendar, never by results.
+  - **Tier 1 (required, 27 runs).** All at π = 0.9, where inter-hub coupling is strongest (κ* < 1 in 37% of midday windows, vs 14% at π = 0.6). SAC-GNN vs SAC-GNN-NoEdge vs SAC-Flat in each:
+
+    | Condition | Flags | Role |
+    |---|---|---|
+    | Coupling on | `--doe_mode network --pv_penetration 0.9` | Does the graph help when hubs are electrically coupled? |
+    | Control: coupling off | `--doe_mode per_hub --pv_penetration 0.9` | Same PV level without coupling, so a network-vs-per-hub difference is due to coupling, not PV level. Also the π = 0.9 point of the PV sensitivity |
+    | Structure off | `--doe_mode per_hub --spatial permuted --pv_penetration 0.9` | Limits shuffled across hubs, which breaks the link between a hub's limits and its place in the graph. Does any graph benefit vanish? |
+
+    The permutation is applied in per-hub mode only. In network mode the penalty is the realised overload and voltage from the true power flow, so permuted limits would also make the projection's limits physically wrong. Structure removal would then be confounded with infeasible limits.
+  - **Tier 2 (if time allows).**
+    - Network mode at π = 0.6, the same three agents (9 runs). This gives a coupling dose–response: per-hub (E1), then 14%, then 37%.
+    - E3 at `--forecast_sigma 0` and `0.10`, SAC-GNN and SAC-Flat only (12 runs). σ = 0.05 comes from E1.
+  - **Tier 3 (dropped first).** PV sensitivity at π = 0.3, per-hub mode, the same three agents (9 runs). π = 0.6 comes from E1 and π = 0.9 from Tier 1.
+  - **Scheduling.** E1 (17 new runs) plus Tier 1 is about 11 packed L40S jobs, about 3 rounds of about 4.5 h under the 4-job limit, about 14 h of compute plus queueing.
 - **Diagnostics (to port).** Neighbour-sensitivity test and attention entropy, as run on the legacy checkpoints.
 
 ## 7. Validation tests (`tests/`, local; `tests/` is gitignored)
@@ -179,7 +194,7 @@ Example (one day, seed 1):
   - SAC-GNN 20.4 ms/step (2.4 h per 1,500 episodes); SAC-GCN 16.1 ms; SAC-Flat 6.7 ms.
   - Four runs packed on one GPU: 24–29 ms/step each (≈3× throughput).
   - The feeder env adds about 25 min per run for per-date DOE computation.
-  - Packed jobs request 8 h.
+  - Packed jobs request 6 h (≈4.5 h expected + ~30%). The λ study measured 8.4 s/episode with three runs packed, about 3.6 h per run.
 - **Plan:**
   1. λ pilot: λ_doe ∈ {0.5, 2, 10} $/kWh, 300 episodes (job 60757441).
   2. Choose the **smallest λ whose limit violations are no worse than NoV2G's**.
@@ -191,6 +206,7 @@ Example (one day, seed 1):
      - **"No worse than NoV2G"** means the CI's upper bound is ≤ 0.5 kWh/day: a margin of about 3% of NoV2G's ~15 kWh/day, set in advance as practically negligible.
      - **Choice.** Among the λ values meeting this, take the smallest. If none meets it, take the λ with the smallest mean d and report that compliance is not matched.
      - **Reporting.** Pre-penalty profit (arbitrage_profit) relative to NoV2G is reported for every λ with the same paired CI, but does not decide λ.
+     - **Disclosure** (added 7 Oct 2026, while the λ-study runs were training, before any results): λ is selected on the same representative days that E1 reports on. The thesis states: "λ was selected by a pre-registered, compliance-only criterion on the evaluation days; profit did not enter the selection; full results for every λ are reported." The λ table (violations and pre-penalty profit vs NoV2G, all λ) is reported as the λ sensitivity analysis. Its scope is SAC-GNN in the main setting only (per-hub DOEs, σ = 0.05, π = 0.6), which is stated as a limitation.
      - **Data.** Applied to the pilot evaluation on the full stratified evaluation set (36 days), after the 2024 price data are completed (§8).
   3. E1 (5 seeds), then E2, E3, PV, E4.
   4. Diagnostics.
