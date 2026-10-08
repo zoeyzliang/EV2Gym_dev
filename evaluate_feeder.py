@@ -44,7 +44,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 ENV_KEYS = ("env", "doe_mode", "spatial", "forecast_sigma", "pv_penetration", "kappa_load", "graph",
-            "action_scale", "participant_billing", "deg_cost", "import_tariff", "thermal_margin")
+            "action_scale", "participant_billing", "deg_cost", "import_tariff", "thermal_margin",
+            "forecast_features")
 
 
 def parse_args():
@@ -53,6 +54,8 @@ def parse_args():
                    help="NAME=TYPE:CHECKPOINT, TYPE in sac_gnn|sac_gcn|sac_flat (repeatable)")
     p.add_argument("--doe_mode", default="per_hub", choices=["per_hub", "network"])
     p.add_argument("--spatial", default="feeder", choices=["feeder", "permuted"])
+    p.add_argument("--forecast_features", action="store_true",
+                   help="§4.10 forecast node features (must match training)")
     p.add_argument("--deg_cost", type=float, default=0.0, help="S1: $/kWh discharged (must match training)")
     p.add_argument("--import_tariff", type=float, default=0.0, help="S1: $/MWh of participants' imports")
     p.add_argument("--thermal_margin", type=float, default=1.0, help="S2b: section rating margin")
@@ -212,6 +215,7 @@ def main():
     cfg.update(env="feeder", doe_mode=args.doe_mode, spatial=args.spatial, action_scale=args.action_scale,
                participant_billing=args.participant_billing,
                deg_cost=args.deg_cost, import_tariff=args.import_tariff, thermal_margin=args.thermal_margin,
+               forecast_features=args.forecast_features,
                forecast_sigma=args.forecast_sigma, pv_penetration=args.pv_penetration, graph=args.graph)
     env, road_graph, hubs = make_env(cfg, split="eval", seed=0)
     pm = env.participation_model
@@ -234,8 +238,9 @@ def main():
 
     train_prices = pd.read_parquet(f"{cfg['cache_dir']}/{cfg['region']}_{cfg['price_start']}_{cfg['price_end']}.parquet")
     agents = [("NoV2G", NoV2GBaseline(env.H)),
-              ("GreedyTOU", GreedyTOUBaseline.from_training_prices(env.H, train_prices)),
-              ("RulePrice", RulePriceBaseline(env.H))]
+              ("GreedyTOU", GreedyTOUBaseline.from_training_prices(env.H, train_prices,
+                                                                  node_feature_dim=env.node_feature_dim)),
+              ("RulePrice", RulePriceBaseline(env.H, node_feature_dim=env.node_feature_dim))]
     if args.mpc_incentive is not None:
         from baselines.forecast_mpc import ForecastMPC
         from nem_env.predispatch import Predispatch

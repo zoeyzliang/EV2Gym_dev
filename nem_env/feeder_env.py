@@ -68,6 +68,9 @@ class FeederEnvConfig:
     # energy; import_tariff $/MWh of participants' grid imports.
     deg_cost: float = 0.0
     import_tariff: float = 0.0
+    # Final RL stage (spec §4.10): 7 extra node features from AEMO predispatch
+    # (set env.predispatch) and the next DOE window. False keeps 17 features.
+    forecast_features: bool = False
     feeder: FeederConfig = field(default_factory=lambda: FeederConfig(kappa_load=0.7, pv_penetration=0.6))
     sessions: SessionConfig = field(default_factory=SessionConfig)
 
@@ -101,12 +104,15 @@ class NEMFeederEnv(gym.Env):
         self.sessions = HubSessions(hub_configs, participation_model, self.cfg.sessions,
                                     rng=self._rng, data=self._session_data)
         self._day_cache = {}
+        self.predispatch = None                  # nem_env.predispatch.Predispatch, if forecast_features
+        self._fc = None
+        self._node_dim = self.NODE_FEATURE_DIM + (7 if self.cfg.forecast_features else 0)
 
         self.action_space = spaces.Box(
             low=np.concatenate([-np.ones(self.H), [self.cfg.price_min]]).astype(np.float32),
             high=np.concatenate([np.ones(self.H), [self.cfg.price_max]]).astype(np.float32),
         )
-        self.observation_space = spaces.Box(-np.inf, np.inf, (self.H * self.NODE_FEATURE_DIM,), np.float32)
+        self.observation_space = spaces.Box(-np.inf, np.inf, (self.H * self._node_dim,), np.float32)
 
     # ------------------------------------------------------------------
     @property
@@ -115,14 +121,14 @@ class NEMFeederEnv(gym.Env):
 
     @property
     def node_feature_dim(self):
-        return self.NODE_FEATURE_DIM
+        return self._node_dim
 
     @property
     def action_dim(self):
         return self.H + 1
 
     def obs_to_node_features(self, obs):
-        return obs.reshape(self.H, self.NODE_FEATURE_DIM)
+        return obs.reshape(self.H, self._node_dim)
 
     # ------------------------------------------------------------------
     def _day(self, index):
@@ -181,6 +187,10 @@ class NEMFeederEnv(gym.Env):
                 exp[s:s + B] = frac_e[s:s + B][:, perm] * self.cap
         self._lim_imp, self._lim_exp = imp, exp
         self._eps = self._forecast_error()
+        if self.cfg.forecast_features:
+            if self.predispatch is None:
+                raise RuntimeError("forecast_features needs env.predispatch")
+            self._fc = np.clip(self.predispatch.day_features(self._idx) / 1000.0, -1.0, 20.3)
         self.sessions.reset()
         self._t = 0
         self._last_v = np.full(self.H, self.feeder.cfg.v_slack)
@@ -334,4 +344,13 @@ class NEMFeederEnv(gym.Env):
             np.full(self.H, float(ts.dayofweek >= 5)),              # 15 weekend
             np.full(self.H, (B - t % B) / B),                       # 16 time to next DOE update
         ], axis=1)
+        if self.cfg.forecast_features:
+            nxt = min(self.STEPS - 1, (t // B + 1) * B)
+            node = np.concatenate([
+                node,
+                np.repeat(self._fc[t][None, :], self.H, axis=0),        # 17–21 predispatch: mean 1 h, mean 3 h,
+                                                                        #   max 6 h, min 6 h, mean to day end
+                (self._lim_imp[nxt] / cap)[:, None],                    # 22 next-window import limit
+                (self._lim_exp[nxt] / cap)[:, None],                    # 23 next-window export limit
+            ], axis=1)
         return node.astype(np.float32).reshape(-1)

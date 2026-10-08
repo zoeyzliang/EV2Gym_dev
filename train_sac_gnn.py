@@ -55,6 +55,7 @@ results/sac_gnn/
 """
 
 import os
+import copy
 import json
 import time
 import argparse
@@ -130,6 +131,8 @@ DEFAULT_CONFIG = {
     "deg_cost": 0.0,                # feeder env S1: $/kWh discharged
     "import_tariff": 0.0,           # feeder env S1: $/MWh of participants' imports
     "thermal_margin": 1.0,          # feeder S2b: section rating = margin × design peak
+    "forecast_features": False,     # feeder §4.10: 7 predispatch / next-DOE node features
+    "baseline_reward": False,       # feeder §4.10: train on r − r(NoV2G, same episode)
     "reward_scale": None,           # None: legacy running-std normalisation; number: clip(k·r, ±10)
     "alpha_min": 0.05,              # floor on the SAC entropy weight
     "forecast_sigma": 0.05,
@@ -264,6 +267,10 @@ def parse_args():
     parser.add_argument("--participant_billing", action="store_true",
                         help="feeder env: bill participants for their requested energy at the day's "
                              "mean RRP (default: v1 free charging)")
+    parser.add_argument("--forecast_features", action="store_true",
+                        help="feeder env: add predispatch forecast and next-DOE node features (spec §4.10)")
+    parser.add_argument("--baseline_reward", action="store_true",
+                        help="train on reward minus NoV2G's reward on a shadow copy of the episode (spec §4.10)")
     parser.add_argument("--reward_scale", type=float, default=None,
                         help="store clip(k·reward, ±10) instead of the running-std normalisation "
                              "(all agents identically); default: legacy behaviour")
@@ -305,6 +312,7 @@ def _make_feeder_env(cfg, split, seed, road_graph, hub_configs, loader, model):
         participant_billing=cfg.get("participant_billing", False),
         deg_cost=cfg.get("deg_cost", 0.0),
         import_tariff=cfg.get("import_tariff", 0.0),
+        forecast_features=cfg.get("forecast_features", False),
         forecast_sigma=cfg["forecast_sigma"],
         lambda_unmet=cfg["lambda_unmet"],
         feeder=FeederConfig(kappa_load=cfg["kappa_load"], pv_penetration=cfg["pv_penetration"],
@@ -313,6 +321,17 @@ def _make_feeder_env(cfg, split, seed, road_graph, hub_configs, loader, model):
     if cfg.get("lambda_conf") is not None:
         env_cfg.lambda_doe = cfg["lambda_conf"]
     env = NEMFeederEnv(hub_configs, loader, profiles, model, env_cfg, seed=seed)
+    if env_cfg.forecast_features:
+        from nem_env.predispatch import Predispatch
+        env.predispatch = Predispatch.load_years(cfg["region"], (2022, 2023, 2024), cfg["cache_dir"])
+        if split == "train":
+            # Days where some decision has no predispatch run in the previous 2 h
+            # (archive gaps, e.g. Oct 2022) are never sampled (spec §4.10).
+            df = loader._price_df
+            stale = [d for d, g in df.groupby(df.index.date) if env.predispatch.stale(g.index)]
+            for d in stale:
+                loader.exclude_window(str(d), str(d))
+            logger.info(f"Forecast features: excluded {len(stale)} training days without fresh predispatch runs")
 
     graph = env.feeder.electrical_graph(road_graph) if cfg["graph"] == "electrical" else road_graph
     if cfg.get("no_edges"):
@@ -833,6 +852,14 @@ def train(cfg: dict, resume_path: str = None, no_eval: bool = False, start_episo
             "total_episodes": n_episodes,
         })
         realized_participation = reset_info.get("participation_params", {})
+        shadow = None
+        if cfg.get("baseline_reward"):
+            # NoV2G on an identical copy of this episode: same day, arrivals,
+            # EV draws, opt-in draws and forecast errors; read-only data shared.
+            share = [train_env.price_loader, train_env.feeder, train_env.grid_profiles,
+                     train_env.predispatch, train_env._day_cache, train_env._session_data]
+            shadow = copy.deepcopy(train_env, memo={id(o): o for o in share if o is not None})
+            nov2g = np.append(-np.ones(train_env.H), 0.0).astype(np.float32)
         done = False
         ep_reward = 0.0
         ep_steps = 0
@@ -847,9 +874,14 @@ def train(cfg: dict, resume_path: str = None, no_eval: bool = False, start_episo
             # Environment step
             next_obs, reward, done, _, info = train_env.step(action)
 
-            # Store transition
+            # Store transition (baseline-subtracted signal if enabled; logging
+            # and validation use the true reward)
+            learn_r = reward
+            if shadow is not None:
+                _, r_base, _, _, _ = shadow.step(nov2g)
+                learn_r = reward - r_base
             agent.store_transition(
-                obs, action, reward, next_obs, done,
+                obs, action, learn_r, next_obs, done,
             )
 
             # SAC update
@@ -1074,6 +1106,8 @@ if __name__ == "__main__":
     cfg["spatial"] = args.spatial
     cfg["action_scale"] = args.action_scale
     cfg["participant_billing"] = args.participant_billing
+    cfg["forecast_features"] = args.forecast_features
+    cfg["baseline_reward"] = args.baseline_reward
     cfg["reward_scale"] = args.reward_scale
     cfg["alpha_min"] = args.alpha_min
     cfg["graph"] = args.graph

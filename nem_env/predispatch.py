@@ -49,7 +49,10 @@ def _month_files(y: int, m: int) -> list:
     files = sorted({h for h in hrefs
                     if re.search(r"PREDISPATCHPRICE(_|%23|#)", h, re.I) and "SENSITIVIT" not in h.upper()})
     if not files:
-        raise RuntimeError(f"no predispatch price file listed for {y}-{m:02d}")
+        # AEMO's archive has gaps (e.g. 2022-10 has no PREDISPATCHPRICE file);
+        # days without fresh runs are excluded from training (stale_days).
+        logger.warning(f"no predispatch price file listed for {y}-{m:02d}; skipping")
+        return []
     return [h if h.startswith("http") else HOST + h if h.startswith("/") else HOST + DIR.format(y=y, m=m) + h
             for h in files]
 
@@ -58,6 +61,62 @@ class Predispatch:
     def __init__(self, df: pd.DataFrame):
         self.df = df.sort_values(["published", "period"]).reset_index(drop=True)
         self._runs = np.sort(self.df["published"].unique())
+        pub = self.df["published"].to_numpy()
+        self._start = np.searchsorted(pub, self._runs, side="left")
+        self._stop = np.searchsorted(pub, self._runs, side="right")
+        self._period = self.df["period"].to_numpy()
+        self._rrp = self.df["rrp"].to_numpy(float)
+
+    @classmethod
+    def load_years(cls, region: str, years, cache_dir: str):
+        return cls(pd.concat([pd.read_parquet(cls.cache_path(region, y, cache_dir)) for y in years],
+                             ignore_index=True).drop_duplicates(["published", "period"]))
+
+    def _run_at(self, times) -> np.ndarray:
+        """Index of the latest run published at or before each time (−1 if none)."""
+        return np.searchsorted(self._runs, np.asarray(times, dtype="datetime64[ns]"), side="right") - 1
+
+    def stale(self, index: pd.DatetimeIndex, max_age_h: float = 2.0) -> bool:
+        """True if any decision (interval end − 5 min) has no run published within max_age_h."""
+        dec = (index - pd.Timedelta(minutes=5)).to_numpy("datetime64[ns]")
+        i = self._run_at(dec)
+        if (i < 0).any():
+            return True
+        age = (dec - self._runs[i]) / np.timedelta64(1, "h")
+        return bool((age > max_age_h).any())
+
+    def day_features(self, index: pd.DatetimeIndex) -> np.ndarray:
+        """
+        Forecast features for each interval of a day (spec §4.10), from the
+        latest run published at or before the decision (interval end − 5 min):
+        mean RRP over the next 1 h and 3 h, max and min over the next 6 h, mean
+        to the end of the day ($/MWh). Periods are 30-min, labelled by their
+        end; a window with no forecast period falls back to the nearest one.
+        Returns (T, 5).
+        """
+        dec = (index - pd.Timedelta(minutes=5)).to_numpy("datetime64[ns]")
+        ends = index.to_numpy("datetime64[ns]")
+        day_end = ends[-1]
+        runs = self._run_at(dec)
+        out = np.zeros((len(index), 5))
+        h = np.timedelta64(1, "h")
+        for t, r in enumerate(runs):
+            if r < 0:
+                continue
+            per = self._period[self._start[r]:self._stop[r]]
+            val = self._rrp[self._start[r]:self._stop[r]]
+            fut = per > ends[t]
+            if not fut.any():
+                out[t] = val[-1] if len(val) else 0.0
+                continue
+            pf, vf = per[fut], val[fut]
+            def win(hours):
+                m = pf <= ends[t] + hours * h
+                return vf[m] if m.any() else vf[:1]
+            rest = vf[pf <= day_end + np.timedelta64(30, "m")]
+            out[t] = [win(1).mean(), win(3).mean(), win(6).max(), win(6).min(),
+                      (rest if len(rest) else vf[:1]).mean()]
+        return out
 
     @staticmethod
     def cache_path(region: str, year: int, cache_dir: str) -> Path:

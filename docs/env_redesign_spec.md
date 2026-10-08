@@ -148,6 +148,41 @@ Session sampling mirrors EV2Gym's public scenario (ElaadNL distributions shipped
 
 Both A+B seeds were required, so the fix is not adopted and v1 remains the reference RL result. Fix A is harmless but does not produce learning. Fix B destabilises training. No further interface iteration is planned: the curves give no evidence that a reward-scale change would succeed, and further tuning would be open-ended.
 
+### 4.10 Final RL stage: SAC-NoEdge-F (recorded 8 Oct 2026, before any code or run)
+**Why this stage.** The coordination LP and the E1 ablation show that message passing adds nothing here, so the graph is not the issue. But "SAC fails to capture the value" is not yet a firm conclusion. Two plausible causes are untested:
+- **Information:** RL sees no price forecasts or next-window DOEs, while MPC does.
+- **Signal:** the controllable reward is small beside uncontrollable terms.
+
+This is the last RL iteration; its outcome is reported whichever way it goes.
+
+**Agent.** SAC with the shared per-hub network (GAT with self-loops only, i.e. NoEdge), plus:
+- **Information parity** (`--forecast_features`). Seven more node features (17 → 24), from the same sources and timing rules as MPC-Predispatch: the latest predispatch run published at least 5 min before the interval starts. Features, broadcast to every hub, RRP/1000 clipped like feature 11:
+  - forecast mean RRP over the next 1 h and next 3 h;
+  - forecast max and min over the next 6 h;
+  - forecast mean to the end of the day.
+
+  Plus the hub's next-window import and export limits / capacity. Predispatch history 2022–24 (`nem_env/predispatch.py`).
+- **Baseline-subtracted learning signal** (`--baseline_reward`). Each training step stores r_t − b_t, where b_t is the reward of NoV2G (all hubs −1, incentive 0) at step t on a shadow copy of the same episode. The copy is made at reset, so arrivals, EV draws, opt-in random draws and forecast errors are identical.
+  - b_t never depends on the agent's actions, so Σ(r − b) differs from Σr by a policy-independent amount, and the optimal policy is unchanged.
+  - Logging, validation and checkpoint selection use the true reward r.
+- **Environment:** participant billing on, `--action_scale feasible`, λ_doe = 0.5 (v1 λ; not re-selected).
+- **Reward processing:**
+  - fixed scale k, set before the pilot by the earlier rule: the 99.9th percentile of |k(r − b)| under random actions on 30 training days equals the clip, 10;
+  - entropy floor α_min ∈ {0.001, 0.01} compared in the pilot.
+
+**Values fixed before the pilot** (8 Oct 2026):
+- Reward scale **k = 1.34**: |r − b| under random actions on 30 training days has 99.9th percentile 7.47, and 10/7.47 = 1.34.
+- NoV2G validation threshold **−5.15 $/day** (normal days; billing on, λ 0.5, forecast env).
+- Predispatch coverage: the AEMO archive has no 2022-10 predispatch price file. **33 training days** where some decision lacks a run published within 2 h are excluded from sampling. 2024 (validation and test) is fully covered.
+
+**Pilot (validation days only).**
+- One packed job, 500 episodes: α_min 0.001 and 0.01, each at seeds 42 and 1.
+- **Measure:** best validation normal-day reward.
+- **Threshold:** NoV2G's validation reward in the same environment (billing on, λ 0.5), computed before the pilot.
+- **Adopt** the α_min whose two seeds both beat NoV2G; if both qualify, the higher mean. If neither qualifies, stop: the conclusion is that RL fails even with information parity and a cleaner signal.
+
+**If adopted.** 5 seeds × 1,500 episodes. Evaluated on the pre-registered days against MPC-Predispatch (incentive 0.2, billing on, the same information) and the LP bound. Main comparison: net economics minus unmet energy vs NoV2G, with the seed-level hierarchical bootstrap.
+
 ## 5. Baselines (`baselines/feeder_baselines.py`)
 
 | Baseline | Rule |
