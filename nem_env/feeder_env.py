@@ -63,6 +63,11 @@ class FeederEnvConfig:
     # aggregator earns only from flexibility. False (v1): the aggregator buys
     # participants' charging and nobody pays it back (free charging).
     participant_billing: bool = False
+    # Robustness check S1 (spec §6): costs the base formulation omits. Both
+    # default to 0 (v1). deg_cost $/kWh of participants' discharged (grid-side)
+    # energy; import_tariff $/MWh of participants' grid imports.
+    deg_cost: float = 0.0
+    import_tariff: float = 0.0
     feeder: FeederConfig = field(default_factory=lambda: FeederConfig(kappa_load=0.7, pv_penetration=0.6))
     sessions: SessionConfig = field(default_factory=SessionConfig)
 
@@ -249,7 +254,9 @@ class NEMFeederEnv(gym.Env):
         mean_rrp = max(0.0, float(np.mean(self._rrp)))
         r_billing = (mean_rrp * dep["billed_part_kwh"] / hs.cfg.eta / 1000.0
                      if self.cfg.participant_billing else 0.0)
-        reward = r_wholesale + r_billing - r_incentive - p_unmet - p_limit
+        r_costs = (self.cfg.deg_cost * float(out["discharged_kwh"].sum())
+                   + self.cfg.import_tariff / 1000.0 * out["part_import_kwh"])
+        reward = r_wholesale + r_billing - r_incentive - r_costs - p_unmet - p_limit
 
         self._t += 1
         terminated = self._t >= self.STEPS
@@ -274,7 +281,8 @@ class NEMFeederEnv(gym.Env):
             "r_wholesale": r_wholesale, "r_incentive": r_incentive,
             "p_unmet": p_unmet, "p_limit": p_limit, "p_terminal": p_terminal,
             "r_billing": r_billing,
-            "arbitrage_profit": r_wholesale + r_billing - r_incentive,
+            "r_costs": r_costs,
+            "arbitrage_profit": r_wholesale + r_billing - r_incentive - r_costs,
             "limit_viol_kwh": float(viol_kw.sum() * dt), "limit_compliant": bool(viol_kw.max() <= 1e-6),
             "v_min": phys["v_min"], "v_max": phys["v_max"], "v_viol_pu": phys["v_viol_pu"],
             "overload_kw": phys["overload_kw"],

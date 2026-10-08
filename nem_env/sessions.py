@@ -284,6 +284,7 @@ class HubSessions:
         dis_kwh = np.maximum(0.0, -x) * dt * self.part
         return {
             "discharged_kwh": np.bincount(self.port_hub, weights=dis_kwh, minlength=self.H),
+            "part_import_kwh": float(np.sum(np.maximum(0.0, x) * dt * self.part)),
             "incentive_paid": float(np.sum(dis_kwh * self.rate)),
             "flex_kw": np.bincount(self.port_hub, weights=x * self.part, minlength=self.H),
             "unctrl_kw": np.bincount(self.port_hub, weights=x * (self.occ & ~self.part), minlength=self.H),

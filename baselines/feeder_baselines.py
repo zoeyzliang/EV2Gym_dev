@@ -142,7 +142,8 @@ def record_day(env, date: str, seed: int, incentive: float):
 
 def perfect_foresight_lp(sessions, rrp, lim_imp, lim_exp, *, eta=0.95, dt=5 / 60,
                          soc_min=0.2, lambda_unmet=1.0, T=288, participant_billing=False,
-                         network=None, return_flows=False):
+                         network=None, return_flows=False, group_limits=None,
+                         deg_cost=0.0, import_tariff=0.0):
     """
     Optimal day-ahead dispatch with full knowledge (spec §5).
 
@@ -181,6 +182,8 @@ def perfect_foresight_lp(sessions, rrp, lim_imp, lim_exp, *, eta=0.95, dt=5 / 60
     wholesale = rrp_t / 1000.0 * dt
     rate = np.array([sessions[i].rate for i in ci])
     cost[:n_x] = np.where(ck == 0, wholesale * part, -wholesale * part + rate * dt * part)
+    # S1 costs on participants: tariff on grid imports, degradation on discharge
+    cost[:n_x] += np.where(ck == 0, import_tariff / 1000.0 * dt, deg_cost * dt) * part
     cost[n_x:] = lambda_unmet
     mean_rrp = max(0.0, float(np.mean(rrp)))
     # Terminal cost for sessions still connected at T: (target − E_T)+ / η · mean_rrp/1000.
@@ -281,6 +284,17 @@ def perfect_foresight_lp(sessions, rrp, lim_imp, lim_exp, *, eta=0.95, dt=5 / 60
                     add_row(list(m), list(Mh[l]), float(network["f_rhs_hi"][w][l]))
                     add_row(list(m), list(-Mh[l]), float(network["f_rhs_lo"][w][l]))
 
+    if group_limits:
+        # Shared connection limits (robustness check S2a): for each group of
+        # hubs, −L ≤ Σ_{h in group} y_h,t ≤ L every step, on top of the hub limits.
+        for members, L in group_limits:
+            in_g = np.isin(hub_of, np.asarray(members))
+            for t in range(T):
+                m = np.where(in_g & (ct == t))[0]
+                if len(m):
+                    add_row(list(m), list(sgn[m]), float(L))
+                    add_row(list(m), list(-sgn[m]), float(L))
+
     A = sparse.csr_matrix((A_vals, (A_rows, A_cols)), shape=(rid, n_tot))
     res = linprog(cost, A_ub=A, b_ub=np.array(rhs_ub), bounds=bounds, method="highs")
     if res.status != 0:
@@ -301,7 +315,8 @@ def perfect_foresight_bound(env, date: str, seed: int, incentives=(0.0, 0.1, 0.2
                                          eta=env.sessions.cfg.eta, dt=env.DT_HR,
                                          soc_min=env.sessions.cfg.soc_min,
                                          lambda_unmet=env.cfg.lambda_unmet, T=env.STEPS,
-                                         participant_billing=env.cfg.participant_billing)
+                                         participant_billing=env.cfg.participant_billing,
+                                         deg_cost=env.cfg.deg_cost, import_tariff=env.cfg.import_tariff)
         if np.isfinite(v) and v > best[0]:
             best = (v, c)
     return best

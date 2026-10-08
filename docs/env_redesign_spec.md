@@ -193,6 +193,24 @@ Example (one day, seed 1):
     - **Checks:** the network plan is re-run through the full power flow on the forecast background (linearisation error) and on the realised background (forecast error). The per-hub path reproduces the existing LP bound exactly (26.639 on 2024-01-04, rep 0).
     - **Two-day check:** value of coordination +0.005 to +0.07 $/day, with zero voltage or thermal violations of the network plan on the forecast background. The full runs decide whether this holds.
   - **v1 RL agents** stay the reference RL result (§4.9 pilot not adopted) and are reported under v1 accounting.
+- **Robustness checks of the benchmark conclusions** (recorded 8 Oct 2026, after the benchmark and coordination results, before any of these runs). All use the LP bound and/or MPC-Predispatch, with billing, on the pre-registered days and reps. CPU only, no RL training. They bound the main stylised assumptions; they are not new claims.
+  - **S1, omitted costs** (each alone; values are a sensitivity grid, not estimates):
+    - battery degradation cost on discharged energy: {0, 0.05, 0.10} $/kWh;
+    - network-tariff adder on participants' grid imports: {0, 50, 100} $/MWh.
+    - Reported: LP bound and MPC value vs NoV2G at each value.
+  - **S2, network:**
+    - **(a) Shared-limit contrast** (the parking-lot structure in our setting). Hubs are grouped behind one shared connection limit. The coordinated LP keeps Σ_group flows within the group limit; the uncoordinated LP splits that limit across the group's hubs in proportion to capacity. Value of coordination = the difference.
+      - Groups: hubs within the same 3-hop electrical neighbourhood (graph components).
+      - Group limit: {0.3, 0.5} × the group's total hub capacity.
+    - **(b) Tighter thermal ratings:** thermal_margin 0.8 in the existing per-hub vs network coordination LP.
+  - **S3, participation:** opt-in price sensitivity β₁ × {0.5, 1.5} (E4 flags), on the LP bound and MPC.
+  - **S4, FCAS availability bound.** For the participants plugged in under MPC-Predispatch (incentive 0.2), per 5-min step:
+    - raise headroom = current participant set-point − max(feasible max discharge, −export limit);
+    - lower headroom = min(feasible max charge, import limit − expected arrivals) − set-point.
+    - Valued at the 2024 VIC1 FCAS enablement prices (AEMO DISPATCHPRICE: contingency raise and lower 1 s, 6 s, 60 s, 5 min, and regulation).
+    - Reported as a range. **Lower bound:** headroom × the single highest-priced service each interval. **Upper bound:** headroom × the sum of all raise (or lower) services, as if co-enabled.
+    - Ignores the 1 MW minimum aggregation, telemetry costs and FCAS trapezium limits. It is an indicative upper range against which to compare arbitrage value, not a dispatch result.
+  - **Order:** S4, S2a, S1, S3, S2b.
 - **Run plan for E2, E3 and PV, in priority tiers** (recorded 7 Oct 2026, while the λ-study runs were training, before any λ-study or E1 results existed). All runs use the λ chosen by §10, `--episodes 1500`, 3 seeds (42, 1, 2), and are evaluated like E1. Lower tiers are dropped first if time runs short (fallback date 20 Oct). Dropping a tier is decided by the calendar, never by results.
   - **Tier 1 (required, 27 runs).** All at π = 0.9, where inter-hub coupling is strongest (κ* < 1 in 37% of midday windows, vs 14% at π = 0.6). SAC-GNN vs SAC-GNN-NoEdge vs SAC-Flat in each:
 

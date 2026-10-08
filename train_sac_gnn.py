@@ -127,6 +127,9 @@ DEFAULT_CONFIG = {
     "spatial": "feeder",            # feeder | permuted
     "action_scale": "capacity",     # feeder env: capacity (v1) | feasible (spec §4.6)
     "participant_billing": False,   # feeder env: participants pay for their energy (spec §4.7)
+    "deg_cost": 0.0,                # feeder env S1: $/kWh discharged
+    "import_tariff": 0.0,           # feeder env S1: $/MWh of participants' imports
+    "thermal_margin": 1.0,          # feeder S2b: section rating = margin × design peak
     "reward_scale": None,           # None: legacy running-std normalisation; number: clip(k·r, ±10)
     "alpha_min": 0.05,              # floor on the SAC entropy weight
     "forecast_sigma": 0.05,
@@ -300,9 +303,12 @@ def _make_feeder_env(cfg, split, seed, road_graph, hub_configs, loader, model):
         spatial=cfg["spatial"],
         action_scale=cfg.get("action_scale", "capacity"),
         participant_billing=cfg.get("participant_billing", False),
+        deg_cost=cfg.get("deg_cost", 0.0),
+        import_tariff=cfg.get("import_tariff", 0.0),
         forecast_sigma=cfg["forecast_sigma"],
         lambda_unmet=cfg["lambda_unmet"],
-        feeder=FeederConfig(kappa_load=cfg["kappa_load"], pv_penetration=cfg["pv_penetration"]),
+        feeder=FeederConfig(kappa_load=cfg["kappa_load"], pv_penetration=cfg["pv_penetration"],
+                            thermal_margin=cfg.get("thermal_margin", 1.0)),
     )
     if cfg.get("lambda_conf") is not None:
         env_cfg.lambda_doe = cfg["lambda_conf"]

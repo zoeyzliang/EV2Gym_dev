@@ -87,7 +87,8 @@ def coordination_value(env, date: str, seed: int, incentives=(0.0, 0.1, 0.2, 0.3
     """
     kw = dict(eta=env.sessions.cfg.eta, dt=env.DT_HR, soc_min=env.sessions.cfg.soc_min,
               lambda_unmet=env.cfg.lambda_unmet, T=env.STEPS,
-              participant_billing=env.cfg.participant_billing)
+              participant_billing=env.cfg.participant_billing,
+              deg_cost=env.cfg.deg_cost, import_tariff=env.cfg.import_tariff)
     best = {"perhub": (-np.inf, None, None), "network": (-np.inf, None, None)}
     net = None
     for c in incentives:
@@ -112,3 +113,49 @@ def coordination_value(env, date: str, seed: int, incentives=(0.0, 0.1, 0.2, 0.3
                     row[f"{mode}_{bg}_{k}"] = x
     row["value_of_coordination"] = row["lp_network"] - row["lp_perhub"]
     return row
+
+
+def shared_limit_groups(feeder, k_hops: int = 3):
+    """Groups of hubs within k electrical hops of each other (graph components)."""
+    import networkx as nx
+    bus = [int(feeder.bus_ids[b]) for b in feeder.hub_bus]
+    g = nx.Graph(); g.add_nodes_from(range(feeder.H))
+    for i in range(feeder.H):
+        for j in range(i + 1, feeder.H):
+            if feeder.hops[bus[i]][bus[j]] <= k_hops:
+                g.add_edge(i, j)
+    return [sorted(c) for c in nx.connected_components(g)]
+
+
+def shared_limit_value(env, date: str, seed: int, frac: float,
+                       incentives=(0.0, 0.1, 0.2, 0.3, 0.4, 0.5)):
+    """
+    Robustness check S2a: each group of hubs sits behind one shared connection
+    limit L_g = frac × Σ hub capacity. Coordinated: Σ_group flows within ±L_g
+    (plus each hub's own DOE). Uncoordinated: L_g split across the group's hubs
+    in proportion to capacity, each hub limited to min(DOE, its share).
+    Returns best LP values over constant incentives and their difference.
+    """
+    kw = dict(eta=env.sessions.cfg.eta, dt=env.DT_HR, soc_min=env.sessions.cfg.soc_min,
+              lambda_unmet=env.cfg.lambda_unmet, T=env.STEPS,
+              participant_billing=env.cfg.participant_billing,
+              deg_cost=env.cfg.deg_cost, import_tariff=env.cfg.import_tariff)
+    groups = shared_limit_groups(env.feeder)
+    cap = env.feeder.hub_cap
+    limits = [(g, frac * cap[g].sum()) for g in groups]
+    share = np.zeros(env.H)
+    for g, L in limits:
+        share[g] = L * cap[g] / cap[g].sum()
+    best = {"coord": (-np.inf, None), "split": (-np.inf, None)}
+    for c in incentives:
+        sessions, rrp, li, le = record_day(env, date, seed, c)
+        v, _ = perfect_foresight_lp(sessions, rrp, li, le, group_limits=limits, **kw)
+        if np.isfinite(v) and v > best["coord"][0]:
+            best["coord"] = (v, c)
+        v, _ = perfect_foresight_lp(sessions, rrp, np.minimum(li, share), np.minimum(le, share), **kw)
+        if np.isfinite(v) and v > best["split"][0]:
+            best["split"] = (v, c)
+    return {"frac": frac, "n_groups": len(groups), "group_sizes": [len(g) for g in groups],
+            "lp_coord": best["coord"][0], "c_coord": best["coord"][1],
+            "lp_split": best["split"][0], "c_split": best["split"][1],
+            "value_of_coordination": best["coord"][0] - best["split"][0]}

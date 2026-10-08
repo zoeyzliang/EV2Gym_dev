@@ -44,7 +44,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 ENV_KEYS = ("env", "doe_mode", "spatial", "forecast_sigma", "pv_penetration", "kappa_load", "graph",
-            "action_scale", "participant_billing")
+            "action_scale", "participant_billing", "deg_cost", "import_tariff", "thermal_margin")
 
 
 def parse_args():
@@ -53,6 +53,9 @@ def parse_args():
                    help="NAME=TYPE:CHECKPOINT, TYPE in sac_gnn|sac_gcn|sac_flat (repeatable)")
     p.add_argument("--doe_mode", default="per_hub", choices=["per_hub", "network"])
     p.add_argument("--spatial", default="feeder", choices=["feeder", "permuted"])
+    p.add_argument("--deg_cost", type=float, default=0.0, help="S1: $/kWh discharged (must match training)")
+    p.add_argument("--import_tariff", type=float, default=0.0, help="S1: $/MWh of participants' imports")
+    p.add_argument("--thermal_margin", type=float, default=1.0, help="S2b: section rating margin")
     p.add_argument("--participant_billing", action="store_true",
                    help="bill participants for their energy (must match training)")
     p.add_argument("--action_scale", default="capacity", choices=["capacity", "feasible"],
@@ -169,7 +172,7 @@ def run_episode(env, agent, date, seed):
     if info.get("date") != date:
         raise RuntimeError(f"requested {date} but the env loaded {info.get('date')} "
                            "(PriceLoader falls back to a random day for incomplete dates)")
-    keys = ["r_wholesale", "r_billing", "r_incentive", "p_unmet", "p_limit", "p_terminal", "arbitrage_profit",
+    keys = ["r_wholesale", "r_billing", "r_costs", "r_incentive", "p_unmet", "p_limit", "p_terminal", "arbitrage_profit",
             "limit_viol_kwh", "v_viol_pu", "overload_kw", "unmet_part_kwh", "unmet_nonpart_kwh",
             "arrivals", "opt_in", "discharged_kwh"]
     acc = {k: 0.0 for k in keys}
@@ -208,6 +211,7 @@ def main():
     cfg = dict(DEFAULT_CONFIG)
     cfg.update(env="feeder", doe_mode=args.doe_mode, spatial=args.spatial, action_scale=args.action_scale,
                participant_billing=args.participant_billing,
+               deg_cost=args.deg_cost, import_tariff=args.import_tariff, thermal_margin=args.thermal_margin,
                forecast_sigma=args.forecast_sigma, pv_penetration=args.pv_penetration, graph=args.graph)
     env, road_graph, hubs = make_env(cfg, split="eval", seed=0)
     pm = env.participation_model

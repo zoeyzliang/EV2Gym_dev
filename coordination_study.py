@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from baselines.coordination import coordination_value
+from baselines.coordination import coordination_value, shared_limit_value
 from evaluate_feeder import episode_seed, select_eval_days
 from train_sac_gnn import DEFAULT_CONFIG, make_env
 
@@ -30,6 +30,10 @@ def main():
     p.add_argument("--pv_penetration", type=float, default=DEFAULT_CONFIG["pv_penetration"])
     p.add_argument("--forecast_sigma", type=float, default=DEFAULT_CONFIG["forecast_sigma"])
     p.add_argument("--participant_billing", action="store_true")
+    p.add_argument("--mode", default="network", choices=["network", "shared"],
+                   help="network: per-hub DOEs vs joint feeder constraints; shared: S2a shared group limit")
+    p.add_argument("--shared_frac", type=float, default=0.3, help="S2a group limit as a share of group capacity")
+    p.add_argument("--thermal_margin", type=float, default=1.0, help="S2b section rating margin")
     p.add_argument("--n_reps", type=int, default=3)
     p.add_argument("--max_days", type=int, default=None)
     p.add_argument("--results_dir", required=True)
@@ -38,7 +42,8 @@ def main():
     out = Path(args.results_dir); out.mkdir(parents=True, exist_ok=True)
     cfg = dict(DEFAULT_CONFIG)
     cfg.update(env="feeder", doe_mode="per_hub", pv_penetration=args.pv_penetration,
-               forecast_sigma=args.forecast_sigma, participant_billing=args.participant_billing)
+               forecast_sigma=args.forecast_sigma, participant_billing=args.participant_billing,
+               thermal_margin=args.thermal_margin)
     env, _, _ = make_env(cfg, split="eval", seed=0)
     days = select_eval_days(env.price_loader._price_df)
     if args.max_days:
@@ -48,16 +53,17 @@ def main():
     for di, (date, meta) in enumerate(days.iterrows()):
         for k in range(args.n_reps):
             seed = episode_seed(date, k)
-            r = coordination_value(env, date, seed)
+            r = (coordination_value(env, date, seed) if args.mode == "network"
+                 else shared_limit_value(env, date, seed, args.shared_frac))
             rows.append({"date": date, "rep": k, "seed": seed, "set": meta["set"], "tier": meta["tier"],
-                         "pv_penetration": args.pv_penetration, **r})
+                         "pv_penetration": args.pv_penetration, "mode": args.mode,
+                         "thermal_margin": args.thermal_margin, **r})
         logger.info(f"day {di + 1}/{len(days)} {date} ({meta['set']}) done, {time.time() - t0:.0f}s; "
                     f"value of coordination rep0 {rows[-args.n_reps]['value_of_coordination']:.3f}")
         pd.DataFrame(rows).to_csv(out / "per_run.csv", index=False)
     json.dump(vars(args), open(out / "args.json", "w"), indent=2)
     df = pd.DataFrame(rows)
-    logger.info("\n" + df.groupby("set")[["lp_perhub", "lp_network", "value_of_coordination"]]
-                .describe().round(3).T.to_string())
+    logger.info("\n" + df.groupby("set")[["value_of_coordination"]].describe().round(3).T.to_string())
 
 
 if __name__ == "__main__":
