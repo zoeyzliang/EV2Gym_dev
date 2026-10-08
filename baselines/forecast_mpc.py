@@ -40,7 +40,8 @@ logger = logging.getLogger(__name__)
 
 
 def plan_lp(sess, rrp, lim_imp, lim_exp, t0, *, H, eta, dt, soc_min, lambda_unmet, T,
-            participant_billing=False, deg_cost=0.0, import_tariff=0.0, tariff_passthrough=False):
+            participant_billing=False, deg_cost=0.0, import_tariff=0.0, tariff_passthrough=False,
+            discharge_price_factor=1.0):
     """
     Solve the shrinking-horizon LP. `sess` is a dict of arrays for connected
     participants: hub, dep, cap, E, target, p_ch, p_dis, rate.
@@ -70,7 +71,7 @@ def plan_lp(sess, rrp, lim_imp, lim_exp, t0, *, H, eta, dt, soc_min, lambda_unme
     cost = np.zeros(n)
     w = rrp[tt] / 1000.0 * dt
     cost[iC:iC + n_x] = w
-    cost[iD:iD + n_x] = -w + sess["rate"][sid] * dt + deg_cost * dt
+    cost[iD:iD + n_x] = -discharge_price_factor * w + sess["rate"][sid] * dt + deg_cost * dt
     cost[iC:iC + n_x] += import_tariff / 1000.0 * dt
     cost[iU:iU + n_s] = lambda_unmet
     p_mean = max(0.0, float(np.mean(rrp))) + (import_tariff if tariff_passthrough else 0.0)
@@ -143,6 +144,8 @@ def plan_lp(sess, rrp, lim_imp, lim_exp, t0, *, H, eta, dt, soc_min, lambda_unme
         return np.zeros((steps, H)), res.message
     x = res.x
     q = x[iC:iC + n_x] - x[iD:iD + n_x]
+    if "exec" in sess:                     # VEM-1 O2: only real participants follow the plan
+        q = q * sess["exec"][sid]
     hub_q = np.zeros((steps, H))
     np.add.at(hub_q, (tt - t0, hub), q)
     return hub_q, "optimal"
@@ -153,7 +156,7 @@ class ForecastMPC:
     needs_env = True
 
     def __init__(self, env, incentive: float, predispatch=None, replan_every: int = 6,
-                 name: str = None):
+                 name: str = None, assume=()):
         self.env = env
         self.c = float(incentive)
         self.pd = predispatch                  # None -> realised prices (perfect-price diagnostic)
@@ -161,6 +164,13 @@ class ForecastMPC:
         self.name = name or ("MPC-Predispatch" if predispatch is not None else "MPC-PerfectPrice")
         self._plan, self._t_plan = None, None
         self.solve_failures = 0
+        # VEM-1 (spec §6): plan with old-model assumptions, executed in the real env.
+        #   O1 no DOEs (limits = hub capacity), O2 every connected EV dispatchable,
+        #   O3 discharge paid 1.2× RRP, O4 soft departure (λ_unmet 0.1, no billing on u).
+        self.assume = set(assume)
+        bad = self.assume - {"O1", "O2", "O3", "O4"}
+        if bad:
+            raise ValueError(f"unknown MPC assumptions {bad}")
 
     # --------------------------------------------------------------
     def _prices(self, t):
@@ -180,15 +190,23 @@ class ForecastMPC:
 
     def _replan(self, t):
         env, hs = self.env, self.env.sessions
-        m = hs.occ & hs.part & (hs.dep > t)
+        A = self.assume
+        m = hs.occ & (hs.part | ("O2" in A)) & (hs.dep > t)
         sess = {"hub": hs.port_hub[m], "dep": hs.dep[m], "cap": hs.cap[m], "E": hs.E[m],
-                "target": hs.target[m], "p_ch": hs.p_ch[m], "p_dis": hs.p_dis[m], "rate": hs.rate[m]}
-        plan, status = plan_lp(sess, self._prices(t), env._lim_imp, env._lim_exp, t,
+                "target": hs.target[m], "p_ch": hs.p_ch[m], "p_dis": hs.p_dis[m],
+                "rate": hs.rate[m] * hs.part[m]}
+        if "O2" in A:
+            sess["exec"] = hs.part[m].astype(float)
+        cap = np.broadcast_to(env.cap, env._lim_imp.shape)
+        lim_i = cap if "O1" in A else env._lim_imp
+        lim_e = cap if "O1" in A else env._lim_exp
+        plan, status = plan_lp(sess, self._prices(t), lim_i, lim_e, t,
                                H=env.H, eta=hs.cfg.eta, dt=env.DT_HR, soc_min=hs.cfg.soc_min,
-                               lambda_unmet=env.cfg.lambda_unmet, T=env.STEPS,
-                               participant_billing=env.cfg.participant_billing,
+                               lambda_unmet=0.1 if "O4" in A else env.cfg.lambda_unmet, T=env.STEPS,
+                               participant_billing=env.cfg.participant_billing and "O4" not in A,
                                deg_cost=env.cfg.deg_cost, import_tariff=env.cfg.import_tariff,
-                               tariff_passthrough=env.cfg.tariff_passthrough)
+                               tariff_passthrough=env.cfg.tariff_passthrough,
+                               discharge_price_factor=(1.2 if "O3" in A else 1.0) * env.cfg.discharge_price_factor)
         if status not in ("optimal", "no sessions"):
             self.solve_failures += 1
             logger.warning(f"MPC LP at step {t}: {status}; holding idle")

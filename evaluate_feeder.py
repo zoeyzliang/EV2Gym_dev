@@ -45,7 +45,8 @@ logger = logging.getLogger(__name__)
 
 ENV_KEYS = ("env", "doe_mode", "spatial", "forecast_sigma", "pv_penetration", "kappa_load", "graph",
             "action_scale", "participant_billing", "deg_cost", "import_tariff", "thermal_margin",
-            "forecast_features", "tariff_passthrough", "feeder_network", "siting")
+            "forecast_features", "tariff_passthrough", "feeder_network", "siting",
+            "no_doe", "full_participation", "discharge_price_factor")
 
 
 def parse_args():
@@ -63,6 +64,11 @@ def parse_args():
     p.add_argument("--feeder_v_base", type=float, default=11.0, help="kV of the network files (CRE21: 22)")
     p.add_argument("--kappa_load", type=float, default=None, help="background load scale (CRE21: 1.0, no retuning)")
     p.add_argument("--siting", default="base", choices=["base", "constrained"], help="CRE21 hub siting")
+    p.add_argument("--no_doe", action="store_true", help="VEM-2 O1: limits = hub capacity")
+    p.add_argument("--full_participation", action="store_true", help="VEM-2 O2: every EV opts in")
+    p.add_argument("--discharge_price_factor", type=float, default=1.0, help="VEM-2 O3: discharge paid × RRP")
+    p.add_argument("--mpc_variants", default="",
+                   help="VEM-1: comma list of old-model planner variants to add, e.g. O1,O2,O3,O4,old")
     p.add_argument("--tariff_passthrough", action="store_true",
                    help="S1b: pass the tariff through on participants' requested energy")
     p.add_argument("--participant_billing", action="store_true",
@@ -222,6 +228,8 @@ def main():
                participant_billing=args.participant_billing,
                deg_cost=args.deg_cost, import_tariff=args.import_tariff, thermal_margin=args.thermal_margin,
                forecast_features=args.forecast_features, tariff_passthrough=args.tariff_passthrough,
+               no_doe=args.no_doe, full_participation=args.full_participation,
+               discharge_price_factor=args.discharge_price_factor,
                feeder_network=args.feeder_network, feeder_v_base=args.feeder_v_base, siting=args.siting,
                **({"kappa_load": args.kappa_load} if args.kappa_load is not None else {}),
                forecast_sigma=args.forecast_sigma, pv_penetration=args.pv_penetration, graph=args.graph)
@@ -256,6 +264,9 @@ def main():
         agents.append(("MPC-Predispatch", ForecastMPC(env, args.mpc_incentive, pdx)))
         if args.mpc_perfect:
             agents.append(("MPC-PerfectPrice", ForecastMPC(env, args.mpc_incentive, None)))
+        for v in [v for v in args.mpc_variants.split(",") if v]:
+            assume = ("O1", "O2", "O3", "O4") if v == "old" else (v,)
+            agents.append((f"MPC-{v}", ForecastMPC(env, args.mpc_incentive, pdx, assume=assume)))
     expected = {k: cfg[k] for k in ENV_KEYS}
     for spec in args.agent:
         agents.append(load_learned(spec, env, road_graph, expected, args.skip_config_check))

@@ -292,6 +292,11 @@ Example (one day, seed 1):
   - **Study VEM-2, how the old model values V2G.** The perfect-foresight LP and MPC are evaluated in an environment with the old assumptions (O1–O3 as env options; O4 can't be relaxed in the env, because forced charging is part of the session model). Reported: the factor by which the old model overstates achievable V2G value, and the coordination value under it. This is the "EV-GNN conditions" check.
   - **Network:** IEEE-34 (main). CRE21 if time allows, with the same rules.
   - **Not done:** RL is not retrained under the old model.
+  - **Implementation notes** (9 Oct 2026, before any VEM result beyond the one-day smoke tests).
+    - **Flags:** `--mpc_variants O1,O2,O3,O4,old` (VEM-1; agents `MPC-<v>`), and `--no_doe --full_participation --discharge_price_factor 1.2` (VEM-2, env options).
+    - **Same job for comparisons:** MPC results differ by about $0.2/day between M3 (scipy 1.17.1) and the Mac (scipy 1.15.2), because the LP optima are degenerate. MPC variants are therefore compared only within one job; all VEM-1 variants run in a single evaluation.
+    - **Pricing assumption:** drivers pay a fixed retail price; the aggregator buys and sells at the VIC1 spot price. Billing participants at the day-mean RRP adds a constant per kWh, so it does not change the dispatch incentive. Prices and the incentive are uniform across hubs.
+    - **Per-hub incentives (decided 9 Oct 2026): not modelled.** With one regional price and separate, rarely binding per-site DOEs, a spatially differentiated incentive has little to exploit. It becomes valuable only with location-specific network value, for example DNSP network-support payments. This is recorded as future work.
 - **Run plan for E2, E3 and PV, in priority tiers** (recorded 7 Oct 2026, while the λ-study runs were training, before any λ-study or E1 results existed). All runs use the λ chosen by §10, `--episodes 1500`, 3 seeds (42, 1, 2), and are evaluated like E1. Lower tiers are dropped first if time runs short (fallback date 20 Oct). Dropping a tier is decided by the calendar, never by results.
   - **Tier 1 (required, 27 runs).** All at π = 0.9, where inter-hub coupling is strongest (κ* < 1 in 37% of midday windows, vs 14% at π = 0.6). SAC-GNN vs SAC-GNN-NoEdge vs SAC-Flat in each:
 

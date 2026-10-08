@@ -186,6 +186,8 @@ class HubSessions:
             n_connecteds=n_conn,
         )
         opt = self.rng.random(n) < prob
+        if getattr(self, "force_opt_in", False):     # VEM-2 (old model O2): every EV participates
+            opt = np.ones(n, bool)
 
         self.occ[arriving] = True
         self.part[arriving] = opt

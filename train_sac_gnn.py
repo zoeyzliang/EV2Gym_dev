@@ -135,6 +135,9 @@ DEFAULT_CONFIG = {
     "feeder_network": "node_34",    # feeder network files (node_cre21: CRE21 study)
     "feeder_v_base": 11.0,          # kV of those files (node_cre21: 22)
     "siting": "base",               # CRE21 hub siting: base | constrained
+    "no_doe": False,                # VEM-2 old-model options (spec §6)
+    "full_participation": False,
+    "discharge_price_factor": 1.0,
     "forecast_features": False,     # feeder §4.10: 7 predispatch / next-DOE node features
     "baseline_reward": False,       # feeder §4.10: train on r − r(NoV2G, same episode)
     "reward_scale": None,           # None: legacy running-std normalisation; number: clip(k·r, ±10)
@@ -317,6 +320,9 @@ def _make_feeder_env(cfg, split, seed, road_graph, hub_configs, loader, model):
         deg_cost=cfg.get("deg_cost", 0.0),
         import_tariff=cfg.get("import_tariff", 0.0),
         tariff_passthrough=cfg.get("tariff_passthrough", False),
+        no_doe=cfg.get("no_doe", False),
+        full_participation=cfg.get("full_participation", False),
+        discharge_price_factor=cfg.get("discharge_price_factor", 1.0),
         forecast_features=cfg.get("forecast_features", False),
         forecast_sigma=cfg["forecast_sigma"],
         lambda_unmet=cfg["lambda_unmet"],

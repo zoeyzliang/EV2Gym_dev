@@ -75,6 +75,10 @@ class FeederEnvConfig:
     # Final RL stage (spec §4.10): 7 extra node features from AEMO predispatch
     # (set env.predispatch) and the next DOE window. False keeps 17 features.
     forecast_features: bool = False
+    # VEM-2 (spec §6): the old EV2Gym-style problem's assumptions as env options.
+    no_doe: bool = False                  # O1: limits = hub capacity only
+    full_participation: bool = False      # O2: every arriving EV opts in
+    discharge_price_factor: float = 1.0   # O3: discharge paid this × RRP (old model: 1.2)
     feeder: FeederConfig = field(default_factory=lambda: FeederConfig(kappa_load=0.7, pv_penetration=0.6))
     sessions: SessionConfig = field(default_factory=SessionConfig)
 
@@ -111,6 +115,7 @@ class NEMFeederEnv(gym.Env):
         self.predispatch = None                  # nem_env.predispatch.Predispatch, if forecast_features
         self._fc = None
         self._node_dim = self.NODE_FEATURE_DIM + (7 if self.cfg.forecast_features else 0)
+        self.sessions.force_opt_in = self.cfg.full_participation
 
         self.action_space = spaces.Box(
             low=np.concatenate([-np.ones(self.H), [self.cfg.price_min]]).astype(np.float32),
@@ -189,6 +194,9 @@ class NEMFeederEnv(gym.Env):
                 perm = self._rng.permutation(self.H)
                 imp[s:s + B] = frac_i[s:s + B][:, perm] * self.cap
                 exp[s:s + B] = frac_e[s:s + B][:, perm] * self.cap
+        if self.cfg.no_doe:
+            imp = np.broadcast_to(self.cap, imp.shape).copy()
+            exp = np.broadcast_to(self.cap, exp.shape).copy()
         self._lim_imp, self._lim_exp = imp, exp
         self._eps = self._forecast_error()
         if self.cfg.forecast_features:
@@ -255,7 +263,8 @@ class NEMFeederEnv(gym.Env):
         self._last_v = phys["hub_v"]
 
         rrp = self._rrp[t]
-        r_wholesale = -rrp * flex.sum() * dt / 1000.0           # buy when charging, sell when discharging
+        f_dis = self.cfg.discharge_price_factor                  # 1.0 except VEM-2 (O3)
+        r_wholesale = -rrp * (np.clip(flex, 0, None).sum() - f_dis * np.clip(-flex, 0, None).sum()) * dt / 1000.0
         r_incentive = out["incentive_paid"]
         # Shortfall at departure for every customer: participants (V2G) and
         # non-participants (throttled to respect the limit) alike.
