@@ -277,6 +277,21 @@ Example (one day, seed 1):
     - nominal-peak voltages 0.98–1.03 pu, so no retuning was applied.
     - **OpenDSS validation passed:** max |ΔV| ≤ 6.3e-6 pu at peak, midday-PV and peak-with-full-hub snapshots (tolerance 0.005 pu).
     - Smoke runs, which are not results: DOE import limits bind on ~10–34% of hub-steps depending on siting and day.
+- **Value of the extended model** (recorded 8 Oct 2026, before any code or result; responds to the supervisor's framing that a "new problem" must extend a literature model and be shown to matter).
+  - **Old problem (literature baseline):** the EV2Gym V2G profit-maximisation problem (Orfanoudakis et al., IEEE T-ITS 2025), also used by EV-GNN (2025). Its assumptions, relative to ours:
+    - **O1** no DOEs: only hub/transformer capacity limits flow;
+    - **O2** every EV is controllable: no opt-in, no incentive;
+    - **O3** discharge paid 1.2× the charging price;
+    - **O4** soft departure: unmet energy is a mild penalty, here λ_unmet = $0.1/kWh in place of $1 and no forced charging in the plan.
+  - **Study VEM-1, cost of planning with the old model.**
+    - **Controllers:** MPC-Predispatch (incentive 0.2, billing on), planned with the new model (*MPC-new*) or with one old assumption switched on (*MPC-O1 … MPC-O4*), plus all four together (*MPC-old*).
+    - **Same information, same controller, same executed environment** (the realistic one); only the planner's internal model differs.
+    - O2 planning treats connected non-participants as dispatchable; their requested discharge is then clipped by the environment, as it would be in reality.
+    - **Metrics,** paired against MPC-new on the pre-registered days × 3 reps: net economics minus unmet energy, realised limit violations (kWh), unmet driver energy (kWh), overload, voltage range. Representative and stress sets reported separately, with 95% bootstrap CIs.
+    - **Interpretation:** a significant loss or extra violations from an assumption shows that this extension matters for decisions.
+  - **Study VEM-2, how the old model values V2G.** The perfect-foresight LP and MPC are evaluated in an environment with the old assumptions (O1–O3 as env options; O4 can't be relaxed in the env, because forced charging is part of the session model). Reported: the factor by which the old model overstates achievable V2G value, and the coordination value under it. This is the "EV-GNN conditions" check.
+  - **Network:** IEEE-34 (main). CRE21 if time allows, with the same rules.
+  - **Not done:** RL is not retrained under the old model.
 - **Run plan for E2, E3 and PV, in priority tiers** (recorded 7 Oct 2026, while the λ-study runs were training, before any λ-study or E1 results existed). All runs use the λ chosen by §10, `--episodes 1500`, 3 seeds (42, 1, 2), and are evaluated like E1. Lower tiers are dropped first if time runs short (fallback date 20 Oct). Dropping a tier is decided by the calendar, never by results.
   - **Tier 1 (required, 27 runs).** All at π = 0.9, where inter-hub coupling is strongest (κ* < 1 in 37% of midday windows, vs 14% at π = 0.6). SAC-GNN vs SAC-GNN-NoEdge vs SAC-Flat in each:
 
