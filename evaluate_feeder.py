@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 ENV_KEYS = ("env", "doe_mode", "spatial", "forecast_sigma", "pv_penetration", "kappa_load", "graph",
             "action_scale", "participant_billing", "deg_cost", "import_tariff", "thermal_margin",
-            "forecast_features", "tariff_passthrough")
+            "forecast_features", "tariff_passthrough", "feeder_network", "siting")
 
 
 def parse_args():
@@ -59,6 +59,10 @@ def parse_args():
     p.add_argument("--deg_cost", type=float, default=0.0, help="S1: $/kWh discharged (must match training)")
     p.add_argument("--import_tariff", type=float, default=0.0, help="S1: $/MWh of participants' imports")
     p.add_argument("--thermal_margin", type=float, default=1.0, help="S2b: section rating margin")
+    p.add_argument("--feeder_network", default="node_34", help="node_34 (default) or node_cre21 (CRE21 study)")
+    p.add_argument("--feeder_v_base", type=float, default=11.0, help="kV of the network files (CRE21: 22)")
+    p.add_argument("--kappa_load", type=float, default=None, help="background load scale (CRE21: 1.0, no retuning)")
+    p.add_argument("--siting", default="base", choices=["base", "constrained"], help="CRE21 hub siting")
     p.add_argument("--tariff_passthrough", action="store_true",
                    help="S1b: pass the tariff through on participants' requested energy")
     p.add_argument("--participant_billing", action="store_true",
@@ -218,6 +222,8 @@ def main():
                participant_billing=args.participant_billing,
                deg_cost=args.deg_cost, import_tariff=args.import_tariff, thermal_margin=args.thermal_margin,
                forecast_features=args.forecast_features, tariff_passthrough=args.tariff_passthrough,
+               feeder_network=args.feeder_network, feeder_v_base=args.feeder_v_base, siting=args.siting,
+               **({"kappa_load": args.kappa_load} if args.kappa_load is not None else {}),
                forecast_sigma=args.forecast_sigma, pv_penetration=args.pv_penetration, graph=args.graph)
     env, road_graph, hubs = make_env(cfg, split="eval", seed=0)
     pm = env.participation_model

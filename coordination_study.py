@@ -34,6 +34,10 @@ def main():
                    help="network: per-hub DOEs vs joint feeder constraints; shared: S2a shared group limit")
     p.add_argument("--shared_frac", type=float, default=0.3, help="S2a group limit as a share of group capacity")
     p.add_argument("--thermal_margin", type=float, default=1.0, help="S2b section rating margin")
+    p.add_argument("--feeder_network", default="node_34", help="node_34 (default) or node_cre21 (CRE21 study)")
+    p.add_argument("--feeder_v_base", type=float, default=11.0, help="kV of the network files (CRE21: 22)")
+    p.add_argument("--kappa_load", type=float, default=None, help="background load scale (CRE21: 1.0, no retuning)")
+    p.add_argument("--siting", default="base", choices=["base", "constrained"], help="CRE21 hub siting")
     p.add_argument("--n_reps", type=int, default=3)
     p.add_argument("--max_days", type=int, default=None)
     p.add_argument("--results_dir", required=True)
@@ -43,7 +47,8 @@ def main():
     cfg = dict(DEFAULT_CONFIG)
     cfg.update(env="feeder", doe_mode="per_hub", pv_penetration=args.pv_penetration,
                forecast_sigma=args.forecast_sigma, participant_billing=args.participant_billing,
-               thermal_margin=args.thermal_margin)
+               thermal_margin=args.thermal_margin, feeder_network=args.feeder_network, feeder_v_base=args.feeder_v_base, siting=args.siting,
+               **({"kappa_load": args.kappa_load} if args.kappa_load is not None else {}))
     env, _, _ = make_env(cfg, split="eval", seed=0)
     days = select_eval_days(env.price_loader._price_df)
     if args.max_days:

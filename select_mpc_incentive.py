@@ -40,13 +40,19 @@ def main():
     p.add_argument("--participant_billing", action="store_true")
     p.add_argument("--import_tariff", type=float, default=0.0)
     p.add_argument("--tariff_passthrough", action="store_true")
+    p.add_argument("--feeder_network", default="node_34", help="node_34 (default) or node_cre21 (CRE21 study)")
+    p.add_argument("--feeder_v_base", type=float, default=11.0, help="kV of the network files (CRE21: 22)")
+    p.add_argument("--kappa_load", type=float, default=None, help="background load scale (CRE21: 1.0, no retuning)")
+    p.add_argument("--siting", default="base", choices=["base", "constrained"], help="CRE21 hub siting")
     p.add_argument("--out", default=None)
     args = p.parse_args()
 
     cfg = dict(DEFAULT_CONFIG)
     cfg.update(env="feeder", doe_mode=args.doe_mode, action_scale=args.action_scale,
                participant_billing=args.participant_billing, import_tariff=args.import_tariff,
-               tariff_passthrough=args.tariff_passthrough)
+               tariff_passthrough=args.tariff_passthrough,
+               feeder_network=args.feeder_network, feeder_v_base=args.feeder_v_base, siting=args.siting,
+               **({"kappa_load": args.kappa_load} if args.kappa_load is not None else {}))
     env, _, _ = make_env(cfg, split="eval", seed=0)
     pdx = Predispatch.load_cache(f"{cfg['cache_dir']}/{cfg['region']}_predispatch_2024.parquet")
 
@@ -65,7 +71,8 @@ def main():
                    "stress_day_excluded": VALIDATION_DAYS[STRESS_TEST_DAY_INDEX],
                    "results": {str(k): v for k, v in rows.items()}, "chosen": best,
                    "doe_mode": args.doe_mode, "participant_billing": args.participant_billing,
-                   "import_tariff": args.import_tariff, "tariff_passthrough": args.tariff_passthrough}, open(args.out, "w"), indent=2)
+                   "import_tariff": args.import_tariff, "tariff_passthrough": args.tariff_passthrough,
+                   "feeder_network": args.feeder_network, "siting": args.siting}, open(args.out, "w"), indent=2)
 
 
 if __name__ == "__main__":

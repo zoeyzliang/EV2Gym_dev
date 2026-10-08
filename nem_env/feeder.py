@@ -44,6 +44,9 @@ class FeederConfig:
     doe_block: int = 6             # steps per DOE publication (30 min)
     graph_k_hops: int = 3          # electrical graph: hubs within k feeder hops
     thermal_margin: float = 1.0    # section rating = margin × downstream design peak
+                                   # (or × the network file's RATING_KW, where given)
+    v_base: float = 11.0           # kV of the network files (node_34: 11; node_cre21: 22)
+    siting: str = "base"           # hub siting on networks with a Sites file: base | constrained
 
 
 class Feeder:
@@ -66,7 +69,9 @@ class Feeder:
         self.lines = pd.read_csv(lines_csv)
         # Same algorithm/model as EV2Gym's GridTensor, without its numba /
         # pandapower dependencies (see nem_env/powerflow.py).
-        self.pf = TensorPowerFlow(self.nodes, self.lines)
+        self.pf = TensorPowerFlow(self.nodes, self.lines, v_base=self.cfg.v_base)
+        sites_csv = _NET_DIR / n / f"Sites_{n.split('_')[1]}.csv"
+        self.sites = pd.read_csv(sites_csv) if sites_csv.exists() else None
 
         # Non-slack buses (power-flow vectors exclude the slack bus 1)
         self.bus_ids = self.nodes["NODES"].to_numpy()[1:]
@@ -109,7 +114,16 @@ class Feeder:
         for l, (_, v) in enumerate(self.sections):
             for n in nx.descendants(rooted, v) | {v}:
                 self.M[l, col[int(n)]] = 1.0
-        self.rating = self.cfg.thermal_margin * (self.M @ self.pd_nom)
+        if "RATING_KW" in self.lines.columns:
+            # real ratings (CRE21: line ampacity, transformer kVA), scaled by the margin
+            r = {(int(a), int(b)): float(k) for a, b, k in
+                 zip(self.lines["FROM"], self.lines["TO"], self.lines["RATING_KW"])}
+            self.rating = self.cfg.thermal_margin * np.array(
+                [r.get((int(u), int(v)), r.get((int(v), int(u)), np.nan)) for u, v in self.sections])
+            if np.isnan(self.rating).any():
+                raise ValueError("a section has no RATING_KW")
+        else:
+            self.rating = self.cfg.thermal_margin * (self.M @ self.pd_nom)
 
     def section_flows(self, P: np.ndarray) -> np.ndarray:
         """Section flows (kW, + towards loads) for bus powers P (..., nb)."""
@@ -122,6 +136,8 @@ class Feeder:
         substation, choose H buses at evenly spaced electrical-distance
         quantiles, and assign in rank order.
         """
+        if self.sites is not None:
+            return self._map_hubs_to_sites()
         loaded = np.where(self.pd_nom > 0)[0]
         if len(loaded) < self.H:
             raise ValueError(f"{self.H} hubs but only {len(loaded)} loaded buses")
@@ -132,6 +148,42 @@ class Feeder:
         hub_rank = np.argsort(radius, kind="stable")
         hub_bus = np.empty(self.H, dtype=int)
         hub_bus[hub_rank] = buses
+        return hub_bus
+
+    def _map_hubs_to_sites(self) -> np.ndarray:
+        """
+        Hubs at distribution-transformer LV busbars (spec §6, CRE21 study),
+        each at a distinct transformer whose rating ≥ the hub capacity.
+          base: H targets at evenly spaced electrical-distance quantiles of all
+                transformer busbars; hubs in radius rank order (as in the
+                default rule) take the feasible free busbar nearest their target.
+          constrained: hubs in decreasing capacity take the smallest feasible
+                free transformer (ties: nearer the substation).
+        """
+        col = {int(b): i for i, b in enumerate(self.bus_ids)}
+        site_bus = np.array([col[int(n)] for n in self.sites["NODE"]])
+        site_cap = self.sites["RATING_KW"].to_numpy(float)
+        free = np.ones(len(site_bus), bool)
+        hub_bus = np.empty(self.H, dtype=int)
+        d = self.elec_dist[site_bus]
+        if self.cfg.siting == "base":
+            targets = np.quantile(d, np.linspace(0, 1, self.H))
+            radius = np.array([np.hypot(hc.loc_x, hc.loc_y) for hc in self.hubs])
+            for k, h in enumerate(np.argsort(radius, kind="stable")):
+                ok = free & (site_cap >= self.hub_cap[h])
+                if not ok.any():
+                    raise ValueError(f"no free transformer can host hub {h} ({self.hub_cap[h]} kW)")
+                j = np.where(ok)[0][np.argmin(np.abs(d[ok] - targets[k]))]
+                hub_bus[h] = site_bus[j]; free[j] = False
+        elif self.cfg.siting == "constrained":
+            for h in np.argsort(-self.hub_cap, kind="stable"):
+                ok = np.where(free & (site_cap >= self.hub_cap[h]))[0]
+                if not len(ok):
+                    raise ValueError(f"no free transformer can host hub {h} ({self.hub_cap[h]} kW)")
+                j = ok[np.lexsort((d[ok], site_cap[ok]))[0]]
+                hub_bus[h] = site_bus[j]; free[j] = False
+        else:
+            raise ValueError(f"siting must be 'base' or 'constrained', got {self.cfg.siting!r}")
         return hub_bus
 
     def electrical_graph(self, base_graph):

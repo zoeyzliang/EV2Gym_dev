@@ -252,6 +252,31 @@ Example (one day, seed 1):
     - tariff {50, 100} $/MWh; the LP bound re-optimises its incentive as before;
     - **the MPC incentive is re-selected per tariff level** on the validation days (`select_mpc_incentive.py`, same rule).
     - S1 results are kept and reported as the worst case.
+- **CRE21 network study** (design recorded 8 Oct 2026, before any import code or result). It addresses the IEEE-34 realism objection and tests the coordination mechanism on a real Australian urban network (also used by HetGPS, arXiv 2608.00679).
+  - **Source.** Team-Nando/MV-LV-Networks (BSD-3; AusNet Services data; cite Ochoa et al.). CRE21 is urban, 22 kV / 0.4 kV:
+    - 643 MV buses in one radial tree (649 line rows, 7 of them parallel duplicates);
+    - 30.5 km of MV line, all three-phase;
+    - 79 distribution transformers (70 residential, 9 C&I; 10–1,500 kVA), 3,383 customers.
+  - **Model** (balanced positive-sequence, as in HetGPS):
+    - slack at the 22 kV side of the zone substation (bus 111), set point as in the base study;
+    - MV lines from linecode r1, x1 × length; parallel duplicates combined; line charging ignored;
+    - **section ratings from real ampacities** (√3 × 22 kV × A) in place of the design rule;
+    - each distribution transformer modelled explicitly (MV bus → LV busbar, impedance from xhl and load loss on its kVA base), with its **kVA rating as a thermal section**;
+    - LV networks below the transformers are not modelled, so LV voltages are out of scope (disclosed).
+  - **Background load.** Residential transformer peak = customers × per-customer diversified peak computed once from the CRE21 profile pool (value recorded before use); C&I transformer peak = 0.5 × kVA (assumption, disclosed). Time shape and PV as in the base study (VIC1 demand and PV shapes, π rule). **No impedance or load retuning:** the network is used as published, and the resulting voltage range is reported.
+  - **Hub siting.** The 21 hubs go to the LV busbars of distinct transformers whose kVA ≥ hub capacity, chosen at evenly spaced electrical-distance quantiles as in the base placement rule (*base siting*). Sensitivity, *constrained siting*: each hub, in decreasing capacity order, at the smallest feasible free transformer. Both are stylised (anonymised network; no real geography match).
+  - **Validation before use.** Our power flow against OpenDSS (dss_python) on the same balanced MV model at peak and midday snapshots; acceptance: max |ΔV| ≤ 0.005 pu.
+  - **Studies.** CPU only, pre-registered days × 3 reps, billing on. RL agents are not retrained:
+    - (a) DOE statistics: how often import and export limits bind, and minimum and maximum voltages;
+    - (b) coordination LP, per-site DOEs vs joint constraints (now including transformer ratings), π = 0.6 and 0.9, both sitings;
+    - (c) benchmark: NoV2G, GreedyTOU, RulePrice, MPC-Predispatch (incentive re-selected on validation days), LP bound.
+    - Optional Tier 2: added uncontrolled residential EV charging per customer, evening-weighted, to approach the fully electrified regime of HetGPS.
+  - **Build and validation** (8 Oct 2026, before any full study run; `tools/build_cre21.py`, network files in `ev2gym/data/network_data/node_cre21/`):
+    - 722 buses / 721 branches (642 MV lines, 7 parallel-combined, plus 79 transformers);
+    - residential diversified peak 1.32 kW per customer (seed 2026); total peak 5.95 MW;
+    - nominal-peak voltages 0.98–1.03 pu, so no retuning was applied.
+    - **OpenDSS validation passed:** max |ΔV| ≤ 6.3e-6 pu at peak, midday-PV and peak-with-full-hub snapshots (tolerance 0.005 pu).
+    - Smoke runs, which are not results: DOE import limits bind on ~10–34% of hub-steps depending on siting and day.
 - **Run plan for E2, E3 and PV, in priority tiers** (recorded 7 Oct 2026, while the λ-study runs were training, before any λ-study or E1 results existed). All runs use the λ chosen by §10, `--episodes 1500`, 3 seeds (42, 1, 2), and are evaluated like E1. Lower tiers are dropped first if time runs short (fallback date 20 Oct). Dropping a tier is decided by the calendar, never by results.
   - **Tier 1 (required, 27 runs).** All at π = 0.9, where inter-hub coupling is strongest (κ* < 1 in 37% of midday windows, vs 14% at π = 0.6). SAC-GNN vs SAC-GNN-NoEdge vs SAC-Flat in each:
 

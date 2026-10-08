@@ -132,6 +132,9 @@ DEFAULT_CONFIG = {
     "import_tariff": 0.0,           # feeder env S1: $/MWh of participants' imports
     "tariff_passthrough": False,    # feeder env S1b: tariff passed through on requested energy
     "thermal_margin": 1.0,          # feeder S2b: section rating = margin × design peak
+    "feeder_network": "node_34",    # feeder network files (node_cre21: CRE21 study)
+    "feeder_v_base": 11.0,          # kV of those files (node_cre21: 22)
+    "siting": "base",               # CRE21 hub siting: base | constrained
     "forecast_features": False,     # feeder §4.10: 7 predispatch / next-DOE node features
     "baseline_reward": False,       # feeder §4.10: train on r − r(NoV2G, same episode)
     "reward_scale": None,           # None: legacy running-std normalisation; number: clip(k·r, ±10)
@@ -318,7 +321,10 @@ def _make_feeder_env(cfg, split, seed, road_graph, hub_configs, loader, model):
         forecast_sigma=cfg["forecast_sigma"],
         lambda_unmet=cfg["lambda_unmet"],
         feeder=FeederConfig(kappa_load=cfg["kappa_load"], pv_penetration=cfg["pv_penetration"],
-                            thermal_margin=cfg.get("thermal_margin", 1.0)),
+                            thermal_margin=cfg.get("thermal_margin", 1.0),
+                            network=cfg.get("feeder_network", "node_34"),
+                            v_base=cfg.get("feeder_v_base", 11.0),
+                            siting=cfg.get("siting", "base")),
     )
     if cfg.get("lambda_conf") is not None:
         env_cfg.lambda_doe = cfg["lambda_conf"]
