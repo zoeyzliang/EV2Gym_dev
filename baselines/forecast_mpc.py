@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 
 def plan_lp(sess, rrp, lim_imp, lim_exp, t0, *, H, eta, dt, soc_min, lambda_unmet, T,
-            participant_billing=False, deg_cost=0.0, import_tariff=0.0):
+            participant_billing=False, deg_cost=0.0, import_tariff=0.0, tariff_passthrough=False):
     """
     Solve the shrinking-horizon LP. `sess` is a dict of arrays for connected
     participants: hub, dep, cap, E, target, p_ch, p_dis, rate.
@@ -73,10 +73,11 @@ def plan_lp(sess, rrp, lim_imp, lim_exp, t0, *, H, eta, dt, soc_min, lambda_unme
     cost[iD:iD + n_x] = -w + sess["rate"][sid] * dt + deg_cost * dt
     cost[iC:iC + n_x] += import_tariff / 1000.0 * dt
     cost[iU:iU + n_s] = lambda_unmet
+    p_mean = max(0.0, float(np.mean(rrp))) + (import_tariff if tariff_passthrough else 0.0)
     if participant_billing:   # unmet energy is also not billed (the billed constant does not affect the plan)
-        cost[iU:iU + n_s] += max(0.0, float(np.mean(rrp))) / 1000.0 / eta
+        cost[iU:iU + n_s] += p_mean / 1000.0 / eta
     still = sess["dep"] > T
-    cost[iV:iV + n_s] = np.where(still, max(0.0, float(np.mean(rrp))) / 1000.0 / eta, 0.0)
+    cost[iV:iV + n_s] = np.where(still, p_mean / 1000.0 / eta, 0.0)
 
     floor = np.minimum(soc_min * sess["cap"], sess["E"])
     lb = np.zeros(n); ub = np.full(n, np.inf)
@@ -186,7 +187,8 @@ class ForecastMPC:
                                H=env.H, eta=hs.cfg.eta, dt=env.DT_HR, soc_min=hs.cfg.soc_min,
                                lambda_unmet=env.cfg.lambda_unmet, T=env.STEPS,
                                participant_billing=env.cfg.participant_billing,
-                               deg_cost=env.cfg.deg_cost, import_tariff=env.cfg.import_tariff)
+                               deg_cost=env.cfg.deg_cost, import_tariff=env.cfg.import_tariff,
+                               tariff_passthrough=env.cfg.tariff_passthrough)
         if status not in ("optimal", "no sessions"):
             self.solve_failures += 1
             logger.warning(f"MPC LP at step {t}: {status}; holding idle")

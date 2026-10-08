@@ -130,6 +130,7 @@ DEFAULT_CONFIG = {
     "participant_billing": False,   # feeder env: participants pay for their energy (spec §4.7)
     "deg_cost": 0.0,                # feeder env S1: $/kWh discharged
     "import_tariff": 0.0,           # feeder env S1: $/MWh of participants' imports
+    "tariff_passthrough": False,    # feeder env S1b: tariff passed through on requested energy
     "thermal_margin": 1.0,          # feeder S2b: section rating = margin × design peak
     "forecast_features": False,     # feeder §4.10: 7 predispatch / next-DOE node features
     "baseline_reward": False,       # feeder §4.10: train on r − r(NoV2G, same episode)
@@ -312,6 +313,7 @@ def _make_feeder_env(cfg, split, seed, road_graph, hub_configs, loader, model):
         participant_billing=cfg.get("participant_billing", False),
         deg_cost=cfg.get("deg_cost", 0.0),
         import_tariff=cfg.get("import_tariff", 0.0),
+        tariff_passthrough=cfg.get("tariff_passthrough", False),
         forecast_features=cfg.get("forecast_features", False),
         forecast_sigma=cfg["forecast_sigma"],
         lambda_unmet=cfg["lambda_unmet"],

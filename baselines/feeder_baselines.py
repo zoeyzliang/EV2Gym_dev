@@ -143,7 +143,7 @@ def record_day(env, date: str, seed: int, incentive: float):
 def perfect_foresight_lp(sessions, rrp, lim_imp, lim_exp, *, eta=0.95, dt=5 / 60,
                          soc_min=0.2, lambda_unmet=1.0, T=288, participant_billing=False,
                          network=None, return_flows=False, group_limits=None,
-                         deg_cost=0.0, import_tariff=0.0):
+                         deg_cost=0.0, import_tariff=0.0, tariff_passthrough=False):
     """
     Optimal day-ahead dispatch with full knowledge (spec §5).
 
@@ -185,7 +185,7 @@ def perfect_foresight_lp(sessions, rrp, lim_imp, lim_exp, *, eta=0.95, dt=5 / 60
     # S1 costs on participants: tariff on grid imports, degradation on discharge
     cost[:n_x] += np.where(ck == 0, import_tariff / 1000.0 * dt, deg_cost * dt) * part
     cost[n_x:] = lambda_unmet
-    mean_rrp = max(0.0, float(np.mean(rrp)))
+    mean_rrp = max(0.0, float(np.mean(rrp))) + (import_tariff if tariff_passthrough else 0.0)
     # Terminal cost for sessions still connected at T: (target − E_T)+ / η · mean_rrp/1000.
     # Handled with an extra slack per such session: v_i ≥ target − E_T, v_i ≥ 0.
     open_ids = [i for i, s in enumerate(sessions) if s.t_dep > T and s.part]
@@ -316,7 +316,8 @@ def perfect_foresight_bound(env, date: str, seed: int, incentives=(0.0, 0.1, 0.2
                                          soc_min=env.sessions.cfg.soc_min,
                                          lambda_unmet=env.cfg.lambda_unmet, T=env.STEPS,
                                          participant_billing=env.cfg.participant_billing,
-                                         deg_cost=env.cfg.deg_cost, import_tariff=env.cfg.import_tariff)
+                                         deg_cost=env.cfg.deg_cost, import_tariff=env.cfg.import_tariff,
+                                         tariff_passthrough=env.cfg.tariff_passthrough)
         if np.isfinite(v) and v > best[0]:
             best = (v, c)
     return best

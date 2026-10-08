@@ -38,12 +38,15 @@ def main():
     p.add_argument("--doe_mode", default="per_hub", choices=["per_hub", "network"])
     p.add_argument("--action_scale", default="capacity", choices=["capacity", "feasible"])
     p.add_argument("--participant_billing", action="store_true")
+    p.add_argument("--import_tariff", type=float, default=0.0)
+    p.add_argument("--tariff_passthrough", action="store_true")
     p.add_argument("--out", default=None)
     args = p.parse_args()
 
     cfg = dict(DEFAULT_CONFIG)
     cfg.update(env="feeder", doe_mode=args.doe_mode, action_scale=args.action_scale,
-               participant_billing=args.participant_billing)
+               participant_billing=args.participant_billing, import_tariff=args.import_tariff,
+               tariff_passthrough=args.tariff_passthrough)
     env, _, _ = make_env(cfg, split="eval", seed=0)
     pdx = Predispatch.load_cache(f"{cfg['cache_dir']}/{cfg['region']}_predispatch_2024.parquet")
 
@@ -61,7 +64,8 @@ def main():
         json.dump({"grid": list(GRID), "validation_days": VALIDATION_DAYS,
                    "stress_day_excluded": VALIDATION_DAYS[STRESS_TEST_DAY_INDEX],
                    "results": {str(k): v for k, v in rows.items()}, "chosen": best,
-                   "doe_mode": args.doe_mode, "participant_billing": args.participant_billing}, open(args.out, "w"), indent=2)
+                   "doe_mode": args.doe_mode, "participant_billing": args.participant_billing,
+                   "import_tariff": args.import_tariff, "tariff_passthrough": args.tariff_passthrough}, open(args.out, "w"), indent=2)
 
 
 if __name__ == "__main__":

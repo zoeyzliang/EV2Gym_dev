@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 ENV_KEYS = ("env", "doe_mode", "spatial", "forecast_sigma", "pv_penetration", "kappa_load", "graph",
             "action_scale", "participant_billing", "deg_cost", "import_tariff", "thermal_margin",
-            "forecast_features")
+            "forecast_features", "tariff_passthrough")
 
 
 def parse_args():
@@ -59,6 +59,8 @@ def parse_args():
     p.add_argument("--deg_cost", type=float, default=0.0, help="S1: $/kWh discharged (must match training)")
     p.add_argument("--import_tariff", type=float, default=0.0, help="S1: $/MWh of participants' imports")
     p.add_argument("--thermal_margin", type=float, default=1.0, help="S2b: section rating margin")
+    p.add_argument("--tariff_passthrough", action="store_true",
+                   help="S1b: pass the tariff through on participants' requested energy")
     p.add_argument("--participant_billing", action="store_true",
                    help="bill participants for their energy (must match training)")
     p.add_argument("--action_scale", default="capacity", choices=["capacity", "feasible"],
@@ -215,7 +217,7 @@ def main():
     cfg.update(env="feeder", doe_mode=args.doe_mode, spatial=args.spatial, action_scale=args.action_scale,
                participant_billing=args.participant_billing,
                deg_cost=args.deg_cost, import_tariff=args.import_tariff, thermal_margin=args.thermal_margin,
-               forecast_features=args.forecast_features,
+               forecast_features=args.forecast_features, tariff_passthrough=args.tariff_passthrough,
                forecast_sigma=args.forecast_sigma, pv_penetration=args.pv_penetration, graph=args.graph)
     env, road_graph, hubs = make_env(cfg, split="eval", seed=0)
     pm = env.participation_model

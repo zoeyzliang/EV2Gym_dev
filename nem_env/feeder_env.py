@@ -68,6 +68,10 @@ class FeederEnvConfig:
     # energy; import_tariff $/MWh of participants' grid imports.
     deg_cost: float = 0.0
     import_tariff: float = 0.0
+    # S1b (spec §6): pass the network tariff through on participants' requested
+    # energy (bills and end-of-day purchases at mean RRP + tariff), so the
+    # aggregator bears the tariff only on extra cycled energy. False = S1.
+    tariff_passthrough: bool = False
     # Final RL stage (spec §4.10): 7 extra node features from AEMO predispatch
     # (set env.predispatch) and the next DOE window. False keeps 17 features.
     forecast_features: bool = False
@@ -262,6 +266,8 @@ class NEMFeederEnv(gym.Env):
             p_limit = (self.cfg.lambda_doe * phys["overload_kw"] * dt
                        + self.cfg.lambda_v * phys["v_viol_pu"])
         mean_rrp = max(0.0, float(np.mean(self._rrp)))
+        if self.cfg.tariff_passthrough:
+            mean_rrp += self.cfg.import_tariff
         r_billing = (mean_rrp * dep["billed_part_kwh"] / hs.cfg.eta / 1000.0
                      if self.cfg.participant_billing else 0.0)
         r_costs = (self.cfg.deg_cost * float(out["discharged_kwh"].sum())

@@ -246,6 +246,12 @@ Example (one day, seed 1):
     - Reported as a range. **Lower bound:** headroom × the single highest-priced service each interval. **Upper bound:** headroom × the sum of all raise (or lower) services, as if co-enabled.
     - Ignores the 1 MW minimum aggregation, telemetry costs and FCAS trapezium limits. It is an indicative upper range against which to compare arbitrage value, not a dispatch result.
   - **Order:** S4, S2a, S1, S3, S2b.
+  - **S1b, corrected network tariff** (recorded 8 Oct 2026 after the S1 results, before this run). As pre-registered, S1 charged the tariff on all participant imports, while participants were billed only the energy price. That is a worst case in which the aggregator absorbs every network charge, including on drivers' own requested energy, which a retail bill would pass on. S1b (`--tariff_passthrough`):
+    - participants are billed for their requested energy at (day-mean RRP + tariff), and end-of-day purchases also pay the tariff;
+    - the aggregator therefore bears the tariff only on extra energy cycled for arbitrage;
+    - tariff {50, 100} $/MWh; the LP bound re-optimises its incentive as before;
+    - **the MPC incentive is re-selected per tariff level** on the validation days (`select_mpc_incentive.py`, same rule).
+    - S1 results are kept and reported as the worst case.
 - **Run plan for E2, E3 and PV, in priority tiers** (recorded 7 Oct 2026, while the λ-study runs were training, before any λ-study or E1 results existed). All runs use the λ chosen by §10, `--episodes 1500`, 3 seeds (42, 1, 2), and are evaluated like E1. Lower tiers are dropped first if time runs short (fallback date 20 Oct). Dropping a tier is decided by the calendar, never by results.
   - **Tier 1 (required, 27 runs).** All at π = 0.9, where inter-hub coupling is strongest (κ* < 1 in 37% of midday windows, vs 14% at π = 0.6). SAC-GNN vs SAC-GNN-NoEdge vs SAC-Flat in each:
 

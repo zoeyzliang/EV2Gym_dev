@@ -88,7 +88,8 @@ def coordination_value(env, date: str, seed: int, incentives=(0.0, 0.1, 0.2, 0.3
     kw = dict(eta=env.sessions.cfg.eta, dt=env.DT_HR, soc_min=env.sessions.cfg.soc_min,
               lambda_unmet=env.cfg.lambda_unmet, T=env.STEPS,
               participant_billing=env.cfg.participant_billing,
-              deg_cost=env.cfg.deg_cost, import_tariff=env.cfg.import_tariff)
+              deg_cost=env.cfg.deg_cost, import_tariff=env.cfg.import_tariff,
+              tariff_passthrough=env.cfg.tariff_passthrough)
     best = {"perhub": (-np.inf, None, None), "network": (-np.inf, None, None)}
     net = None
     for c in incentives:
@@ -139,7 +140,8 @@ def shared_limit_value(env, date: str, seed: int, frac: float,
     kw = dict(eta=env.sessions.cfg.eta, dt=env.DT_HR, soc_min=env.sessions.cfg.soc_min,
               lambda_unmet=env.cfg.lambda_unmet, T=env.STEPS,
               participant_billing=env.cfg.participant_billing,
-              deg_cost=env.cfg.deg_cost, import_tariff=env.cfg.import_tariff)
+              deg_cost=env.cfg.deg_cost, import_tariff=env.cfg.import_tariff,
+              tariff_passthrough=env.cfg.tariff_passthrough)
     groups = shared_limit_groups(env.feeder)
     cap = env.feeder.hub_cap
     limits = [(g, frac * cap[g].sum()) for g in groups]
