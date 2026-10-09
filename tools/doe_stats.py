@@ -11,9 +11,13 @@ Usage:
 """
 
 import argparse
+import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # run as a script from the repo root
 
 from evaluate_feeder import select_eval_days
 from train_sac_gnn import DEFAULT_CONFIG, make_env

@@ -55,8 +55,18 @@ def main():
         days = days.iloc[:args.max_days]
 
     rows, t0 = [], time.time()
+    done = set()
+    if (out / "per_run.csv").exists():                   # resume: keep finished (date, rep) rows
+        prev = pd.read_csv(out / "per_run.csv")
+        rows = prev.to_dict("records")
+        done = set(zip(prev["date"].astype(str), prev["rep"]))
+        logger.info(f"resuming: {len(done)} (date, rep) rows already done")
     for di, (date, meta) in enumerate(days.iterrows()):
+        if all((str(date), k) in done for k in range(args.n_reps)):
+            continue
         for k in range(args.n_reps):
+            if (str(date), k) in done:
+                continue
             seed = episode_seed(date, k)
             r = (coordination_value(env, date, seed) if args.mode == "network"
                  else shared_limit_value(env, date, seed, args.shared_frac))
