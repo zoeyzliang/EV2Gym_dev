@@ -61,10 +61,10 @@ efficiency to compute_gamma().
 
 Default parameter values
 ------------------------
-β₀ = -2.20  (intercept; implies ρ ≈ 0.10 at zero price, near distance, mid SoC)
-β₁ = +0.04  (price sensitivity; ρ increases ~20pp per $50/MWh increase)
-β₂ = -0.20  (distance penalty; ρ drops ~20pp per 10 km)
-β₃ = +1.50  (SoC effect; high SoC owners significantly more willing)
+β₀ = -2.20  (intercept)
+β₁ = +0.008 per $/MWh of incentive (= +8 per $/kWh)
+β₂ = -0.20  per km (distance penalty)
+β₃ = +1.50  (SoC effect; high SoC owners more willing)
 γ  = +0.14  ($/kWh; degradation disutility per kWh of anticipated discharge)
 
 Calibration basis: Liu et al. (2025) systematic review of V2G acceptance [14]
@@ -72,12 +72,14 @@ establishes that economic incentive, range anxiety (proxied by d_i and s̄),
 and convenience are the dominant participation antecedents. γ follows
 Hematiboroujeni et al. (2026); no published study estimates V2G-specific
 discharge disutility from real participation data (see thesis discussion),
-so β and γ are both reasoned assumptions, not fitted parameters. The
-combined values produce the following sanity-check behaviour:
-  - At c=0, d=0, s̄=0.5, g=0:    ρ ≈ 0.12
-  - At c=100, d=0, s̄=0.5, g=0:  ρ ≈ 0.55  (a meaningful incentive works)
-  - At c=100, d=10, s̄=0.5, g=0: ρ ≈ 0.38  (distance penalty is real)
-  - At c=200, d=0, s̄=0.8, g=0:  ρ ≈ 0.90  (high price + high SoC → near-certain)
+so β and γ are both reasoned assumptions, not fitted parameters.
+
+Behaviour with these values (feeder env, opt-in once per session at arrival;
+spec docs/env_redesign_spec.md §4.5 is the source of truth):
+  - measured opt-in over sessions: ≈ 11% at $0/kWh, 39% at $0.20, 78% at $0.50;
+  - across the 21 hubs (d = 0.8–7.8 km; s̄ = 0.5, g = 0): 5–17% at $0,
+    19–50% at $0.20, 73–92% at $0.50, so distance is the main source of
+    between-hub differences. Sensitivity: β₁ × {0.5, 1.5} (S3), β₂ × {0, 2} (S3b).
   - At c=200, d=0, s̄=0.8, g=10: ρ drops relative to g=0 by γ·g in logit units
     (a 10 kWh anticipated discharge at γ=0.14 subtracts 1.4 from the logit —
     comparable in magnitude to the entire distance penalty at d≈7km)
