@@ -183,6 +183,17 @@ This is the last RL iteration; its outcome is reported whichever way it goes.
 
 **If adopted.** 5 seeds × 1,500 episodes. Evaluated on the pre-registered days against MPC-Predispatch (incentive 0.2, billing on, the same information) and the LP bound. Main comparison: net economics minus unmet energy vs NoV2G, with the seed-level hierarchical bootstrap.
 
+**Pilot outcome (9 Oct 2026; job 60827987, 500 episodes, validation days only).** Best validation normal-day reward, against the threshold of −5.15:
+
+| α_min | seed 42 | seed 1 | mean | both beat the threshold |
+|---|---|---|---|---|
+| 0.001 | −5.08 | −1.20 | −3.14 | yes |
+| 0.01 | −4.58 | −3.77 | −4.18 | yes |
+
+- **Adopted: α_min = 0.001,** because both rows qualify and 0.001 has the higher mean.
+- **Caveat, reported with the result:** the margins are small. Seed 42 at 0.001 beats the threshold by 0.07, and each "best" is the maximum of 10 noisy evaluations on 5 days. Validation curves still swing by tens of $/day between checkpoints. Participation stays at 2–5%.
+- **Full run as pre-registered:** seeds 42, 1, 2, 3, 4 × 1,500 episodes, with the pilot flags. Measured speed is 0.147 min per episode with 4 runs packed, so about 3.7 h per pack; the limit is 5 h.
+
 ## 5. Baselines (`baselines/feeder_baselines.py`)
 
 | Baseline | Rule |
